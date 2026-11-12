@@ -44,11 +44,11 @@ if (-not $root) {
     $root = (Get-Location).Path
 }
 
-$iconPath = Join-Path $PSScriptRoot "assets\resin-slicer.ico"
-$pngPath = Join-Path $PSScriptRoot "assets\resin-slicer-icon-256.png"
+$iconPath = Join-Path $PSScriptRoot "..\src\assets\app\app-icon.ico"
+$pngPath = Join-Path $PSScriptRoot "..\src\assets\app\app-icon-256.png"
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = "Resin Slicer"
+$form.Text = "EZSlicer"
 $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
 $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
 $form.TopMost = $false
@@ -83,7 +83,7 @@ $title.Location = [System.Drawing.Point]::new(132, 50)
 $title.Size = [System.Drawing.Size]::new(250, 34)
 $title.Font = [System.Drawing.Font]::new("Segoe UI", 18, [System.Drawing.FontStyle]::Bold)
 $title.ForeColor = [System.Drawing.Color]::FromArgb(238, 242, 245)
-$title.Text = "Resin Slicer"
+$title.Text = "EZSlicer"
 $title.Cursor = [System.Windows.Forms.Cursors]::Hand
 $card.Controls.Add($title)
 
@@ -118,12 +118,23 @@ $script:mainWindowLoaded = $false
 $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
 $timer = New-Object System.Windows.Forms.Timer
 $timer.Interval = 30
+# Close shortly after the main window is visible; give up after 20 s if it never appears.
+$script:mainSeenAt = -1
 $timer.Add_Tick({
-    $elapsed = [Math]::Min(5000, $stopwatch.ElapsedMilliseconds)
-    $bar.Width = [int]($barBack.Width * ($elapsed / 5000.0))
+    $elapsed = $stopwatch.ElapsedMilliseconds
     $script:ownerHandle = Set-SplashOwner -Form $form -CurrentOwner $script:ownerHandle
     Ensure-SplashAboveOwner -Form $form -Owner $script:ownerHandle
-    if ($elapsed -ge 5000) {
+    if ($script:mainWindowLoaded -and $script:mainSeenAt -lt 0) {
+        $script:mainSeenAt = $elapsed
+    }
+    if ($script:mainSeenAt -ge 0) {
+        $progress = 0.85 + 0.15 * [Math]::Min(1.0, ($elapsed - $script:mainSeenAt) / 1800.0)
+    } else {
+        # Ease toward 85% while the dev server and Electron start.
+        $progress = 0.85 * (1.0 - [Math]::Exp(-$elapsed / 4000.0))
+    }
+    $bar.Width = [int]($barBack.Width * $progress)
+    if (($script:mainSeenAt -ge 0 -and $elapsed - $script:mainSeenAt -ge 1800) -or $elapsed -ge 20000) {
         $timer.Stop()
         $form.Close()
     }
@@ -141,13 +152,13 @@ foreach ($control in $script:splashControls) {
     $control.Add_Click($dismiss)
 }
 
-function Get-ResinSlicerWindowHandle {
+function Get-EZSlicerWindowHandle {
     $windows = @(Get-Process -Name "electron" -ErrorAction SilentlyContinue |
-        Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq "Resin Slicer" })
+        Where-Object { $_.MainWindowHandle -ne 0 -and $_.MainWindowTitle -eq "EZSlicer" })
 
     foreach ($window in $windows) {
         try {
-            if ($window.Path -and $window.Path.StartsWith($PSScriptRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            if ($window.Path -and $window.Path.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) {
                 return $window.MainWindowHandle
             }
         } catch {
@@ -167,7 +178,7 @@ function Set-SplashOwner {
         [Parameter(Mandatory = $true)][IntPtr]$CurrentOwner
     )
 
-    $nextOwner = Get-ResinSlicerWindowHandle
+    $nextOwner = Get-EZSlicerWindowHandle
     if ($nextOwner -ne [IntPtr]::Zero -and $nextOwner -ne $CurrentOwner) {
         [SplashNative]::SetWindowOwner($Form.Handle, $nextOwner) | Out-Null
         [SplashNative]::PlaceAboveOwner($Form.Handle, $nextOwner)

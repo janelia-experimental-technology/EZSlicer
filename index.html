@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Resin Slicer</title>
-    <link rel="icon" type="image/x-icon" href="./assets/resin-slicer.ico">
+    <title>EZSlicer</title>
+    <link rel="icon" type="image/x-icon" href="./src/assets/app/favicon.ico">
     <link rel="stylesheet" href="./electron/styles.css">
   </head>
   <body>
@@ -184,9 +184,10 @@
       <aside id="rightPanel" class="panel right-panel menu-focused">
         <div class="sidebar-header">
           <div>
-            <h1>Resin Slicer</h1>
+            <h1>EZSlicer</h1>
             <p>Load, place, preview, slice.</p>
           </div>
+          <img class="sidebar-brand" src="./src/assets/brand/jet-logo-on-dark.svg" alt="jET" title="Janelia Experimental Technology">
         </div>
 
         <section id="menuJob" class="group workflow right-menu-section active-menu-section" data-right-menu-section="job">
@@ -391,7 +392,7 @@
       <section class="prompt-dialog" role="dialog" aria-modal="true" aria-labelledby="promptTitle">
         <div id="promptIcon" class="prompt-icon">!</div>
         <div class="prompt-body">
-          <h2 id="promptTitle">Resin Slicer</h2>
+          <h2 id="promptTitle">EZSlicer</h2>
           <p id="promptMessage"></p>
           <pre id="promptDetail" hidden></pre>
           <div class="prompt-actions">

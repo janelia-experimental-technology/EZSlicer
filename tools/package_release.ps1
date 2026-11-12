@@ -47,9 +47,9 @@ function Copy-MinimalPythonRuntime {
 
 $root = Split-Path -Parent $PSScriptRoot
 $distRoot = Join-Path $root "dist"
-$appDist = Join-Path $distRoot "ResinSlicer"
-$packageRoot = Join-Path $distRoot "ResinSlicer-Windows-Portable"
-$zipPath = Join-Path $distRoot "ResinSlicer-Windows-Portable.zip"
+$appDist = Join-Path $distRoot "EZSlicer"
+$packageRoot = Join-Path $distRoot "EZSlicer-Windows-Portable"
+$zipPath = Join-Path $distRoot "EZSlicer-Windows-Portable.zip"
 
 if (!$SkipBuild) {
     & (Join-Path $PSScriptRoot "build_electron_portable.ps1")
@@ -68,16 +68,16 @@ if (Test-Path $packageRoot) {
 }
 New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
 
-Copy-Item -LiteralPath $appDist -Destination (Join-Path $packageRoot "ResinSlicer") -Recurse -Force
+Copy-Item -LiteralPath $appDist -Destination (Join-Path $packageRoot "EZSlicer") -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination (Join-Path $packageRoot "README.md") -Force
 Copy-Item -LiteralPath (Join-Path $root "LICENSE") -Destination (Join-Path $packageRoot "LICENSE") -Force
 
 $launcher = @"
 @echo off
-cd /d "%~dp0ResinSlicer"
-start "" "ResinSlicer.exe"
+cd /d "%~dp0EZSlicer"
+start "" "EZSlicer.exe"
 "@
-Set-Content -LiteralPath (Join-Path $packageRoot "Run ResinSlicer.bat") -Value $launcher -Encoding ASCII
+Set-Content -LiteralPath (Join-Path $packageRoot "Run EZSlicer.bat") -Value $launcher -Encoding ASCII
 
 if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force

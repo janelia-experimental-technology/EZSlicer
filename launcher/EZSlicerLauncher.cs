@@ -3,7 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
 
-namespace ResinSlicerLauncher
+namespace EZSlicerLauncher
 {
     internal static class Program
     {
@@ -14,7 +14,7 @@ namespace ResinSlicerLauncher
             Application.SetCompatibleTextRenderingDefault(false);
 
             string root = AppDomain.CurrentDomain.BaseDirectory;
-            string portableExe = Path.Combine(root, "dist", "ResinSlicer", "ResinSlicer.exe");
+            string portableExe = Path.Combine(root, "dist", "EZSlicer", "EZSlicer.exe");
             if (File.Exists(portableExe))
             {
                 if (StartProcess(portableExe, "", Path.GetDirectoryName(portableExe), false))
@@ -40,9 +40,9 @@ namespace ResinSlicerLauncher
                 if (!File.Exists(electronExe))
                 {
                     MessageBox.Show(
-                        "Electron dependencies are not installed, so Resin Slicer opened the fallback Python GUI.\n\n" +
+                        "Electron dependencies are not installed, so EZSlicer opened the fallback Python GUI.\n\n" +
                         "To enable the 3D Electron viewer, install Node.js/npm, then run `npm install` in:\n" + root,
-                        "Resin Slicer",
+                        "EZSlicer",
                         MessageBoxButtons.OK,
                         MessageBoxIcon.Information
                     );
@@ -51,10 +51,10 @@ namespace ResinSlicerLauncher
             }
 
             MessageBox.Show(
-                "Resin Slicer could not start.\n\n" +
+                "EZSlicer could not start.\n\n" +
                 "Use the packaged app at:\n" + portableExe + "\n\n" +
                 "Or install Python 3.10+ / Electron dependencies in:\n" + root,
-                "Resin Slicer",
+                "EZSlicer",
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Error
             );

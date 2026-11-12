@@ -1,6 +1,6 @@
-# Resin Slicer
+# EZSlicer
 
-Resin Slicer is a Windows-focused MSLA resin slicer with an Electron 3D viewer, deterministic Python slicing backend, automatic island support generation, and native `.goo` / `.ctb` export.
+EZSlicer is a Windows-focused MSLA resin slicer with an Electron 3D viewer, deterministic Python slicing backend, automatic island support generation, and native `.goo` / `.ctb` export.
 
 The project favors stability and explicit settings over silent guessing. Always confirm the machine profile, resin profile, and output format against the printer you intend to use before printing.
 
@@ -8,9 +8,9 @@ The project favors stability and explicit settings over silent guessing. Always 
 
 For someone who just wants to run the app:
 
-1. Extract `ResinSlicer-Windows-Portable.zip`.
-2. Run `Run ResinSlicer.bat`, or open `ResinSlicer\ResinSlicer.exe`.
-3. Keep the `ResinSlicer` folder together. Do not move only the `.exe` out of the folder.
+1. Extract `EZSlicer-Windows-Portable.zip`.
+2. Run `Run EZSlicer.bat`, or open `EZSlicer\EZSlicer.exe`.
+3. Keep the `EZSlicer` folder together. Do not move only the `.exe` out of the folder.
 
 The packaged build includes Electron and a minimal Python runtime, so users should not need Node.js, npm, or a separate Python install.
 
@@ -22,8 +22,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\package_release.ps1
 
 Outputs:
 
-- `dist\ResinSlicer-Windows-Portable\`
-- `dist\ResinSlicer-Windows-Portable.zip`
+- `dist\EZSlicer-Windows-Portable\`
+- `dist\EZSlicer-Windows-Portable.zip`
 
 ## GUI Workflow
 
@@ -162,7 +162,7 @@ npm run dev
 
 `npm install` runs a `postinstall` step (`tools/ensure-electron.js`) that guarantees the Electron binary is unpacked, working around environments where Electron's own installer downloads the binary but fails to extract it.
 
-The double-click `Launch Resin Slicer.vbs` launcher also starts this development flow without leaving a terminal window visible. It shows the lightweight splash screen first, launches the Vite dev server on `http://127.0.0.1:5178`, and then starts Electron with `VITE_DEV_SERVER_URL` pointed at that server.
+The double-click `Launch EZSlicer` shortcut in the app folder (and the `EZSlicer` desktop shortcut it installs) runs `launchers\EZSlicer.vbs` through `wscript.exe`, which starts this development flow without leaving a terminal window visible. It shows the lightweight splash screen first, launches the Vite dev server on `http://127.0.0.1:5178`, and then starts Electron with `VITE_DEV_SERVER_URL` pointed at that server.
 
 Renderer/UI changes hot-update through Vite without closing the Electron window. Electron main-process and preload changes still require restarting the app.
 
@@ -179,14 +179,14 @@ Build the portable app folder without the release zip:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\build_electron_portable.ps1
-.\dist\ResinSlicer\ResinSlicer.exe
+.\dist\EZSlicer\EZSlicer.exe
 ```
 
 Build the optional root launcher:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\tools\build_launcher.ps1
-.\ResinSlicer.exe
+.\EZSlicer.exe
 ```
 
 ## Safety Checklist

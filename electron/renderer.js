@@ -2311,7 +2311,7 @@ function initThemedPrompts() {
   }
 }
 
-function showThemedPrompt({ title = "Resin Slicer", message = "", detail = "", kind = "info", confirmText = "OK", cancelText = "Cancel", cancelable = false } = {}) {
+function showThemedPrompt({ title = "EZSlicer", message = "", detail = "", kind = "info", confirmText = "OK", cancelText = "Cancel", cancelable = false } = {}) {
   const overlay = $("promptOverlay");
   const dialog = overlay.querySelector(".prompt-dialog");
   $("promptTitle").textContent = title;
@@ -3646,7 +3646,7 @@ async function openProject() {
       throw new Error(`Project file is not valid JSON (${error.message})`);
     }
     if (!snapshot || snapshot.schema !== "resin-slicer-project") {
-      throw new Error("File is not a Resin Slicer project.");
+      throw new Error("File is not an EZSlicer project.");
     }
     await loadProjectSnapshot(snapshot);
   } catch (error) {
@@ -3797,7 +3797,7 @@ function projectFileName() {
   const outputPath = $("outputPath").value.trim();
   if (outputPath) return `${safeFileStem(fileName(outputPath).replace(/\.[^.]+$/, ""))}-project.json`;
   if (models.length) return `${safeFileStem(fileName(models[0].path).replace(/\.[^.]+$/, ""))}-project.json`;
-  return "resin-slicer-project.json";
+  return "ezslicer-project.json";
 }
 
 function setDefaultOutput() {
@@ -3881,7 +3881,7 @@ function defaultOutputPath(items, ext) {
   const firstPath = items[0].path;
   const separatorIndex = Math.max(firstPath.lastIndexOf("\\"), firstPath.lastIndexOf("/"));
   const directory = separatorIndex >= 0 ? firstPath.slice(0, separatorIndex + 1) : "";
-  return `${directory}resin-slicer-job.${ext}`;
+  return `${directory}ezslicer-job.${ext}`;
 }
 
 function replaceExtension(path, ext) {

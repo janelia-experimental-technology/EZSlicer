@@ -812,6 +812,14 @@ body {
   font-size: 12px;
 }
 
+.sidebar-brand {
+  flex: none;
+  align-self: center;
+  height: 26px;
+  width: auto;
+  opacity: 0.8;
+}
+
 .sidebar-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

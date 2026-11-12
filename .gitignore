@@ -8,3 +8,7 @@ dist/
 *.stl
 *.exe
 *.zip
+
+# Machine-local launchers from install-windows-launcher.ps1 (absolute paths)
+*.lnk
+launchers/*-shortcut-icon-*.ico

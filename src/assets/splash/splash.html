@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>EZSlicer</title>
+    <style>
+      html, body {
+        margin: 0;
+        height: 100%;
+        background: #151a20;
+        color: #eef2f5;
+        font-family: "Segoe UI", system-ui, sans-serif;
+        overflow: hidden;
+        user-select: none;
+        -webkit-app-region: drag;
+      }
+      .splash {
+        position: relative;
+        box-sizing: border-box;
+        height: 100%;
+        display: grid;
+        grid-template-columns: 86px 1fr;
+        column-gap: 20px;
+        align-items: center;
+        padding: 0 34px 0 28px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .icon { width: 86px; height: 86px; }
+      h1 { margin: 0 0 4px; font-size: 24px; font-weight: 700; letter-spacing: 0.01em; }
+      p { margin: 0 0 16px; font-size: 13px; color: #aab5bf; }
+      .bar { height: 6px; background: #2b333d; overflow: hidden; }
+      .bar span {
+        display: block;
+        height: 100%;
+        width: 40%;
+        background: #7aece0;
+        animation: sweep 1.4s ease-in-out infinite;
+      }
+      @keyframes sweep {
+        from { transform: translateX(-100%); }
+        to { transform: translateX(250%); }
+      }
+      .brand {
+        position: absolute;
+        right: 16px;
+        bottom: 12px;
+        height: 22px;
+        opacity: 0.85;
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .bar span { animation: none; width: 100%; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="splash" aria-label="EZSlicer is loading">
+      <img class="icon" src="../app/app-icon-256.png" alt="" />
+      <div>
+        <h1>EZSlicer</h1>
+        <p>Loading the 3D workspace...</p>
+        <div class="bar" aria-hidden="true"><span></span></div>
+      </div>
+      <img class="brand" src="../brand/jet-logo-on-dark.svg" alt="jET" />
+    </main>
+  </body>
+</html>

@@ -8,8 +8,8 @@ $cacheDir = Join-Path $root ".electron-cache"
 $zipPath = Join-Path $cacheDir "$runtimeName.zip"
 $runtimeDir = Join-Path $cacheDir $runtimeName
 $distRoot = Join-Path $root "dist"
-$appDist = Join-Path $distRoot "ResinSlicer"
-$nextDist = Join-Path $distRoot "ResinSlicer.next"
+$appDist = Join-Path $distRoot "EZSlicer"
+$nextDist = Join-Path $distRoot "EZSlicer.next"
 $resourcesApp = Join-Path $nextDist "resources\app"
 
 New-Item -ItemType Directory -Force -Path $cacheDir | Out-Null
@@ -69,21 +69,21 @@ Get-ChildItem -Path $resourcesApp -Recurse -Filter "*.pyc" |
     Remove-Item -Force
 
 $electronExe = Join-Path $nextDist "electron.exe"
-$resinExe = Join-Path $nextDist "ResinSlicer.exe"
+$resinExe = Join-Path $nextDist "EZSlicer.exe"
 if (Test-Path $resinExe) {
     Remove-Item -LiteralPath $resinExe -Force
 }
-Rename-Item -LiteralPath $electronExe -NewName "ResinSlicer.exe"
+Rename-Item -LiteralPath $electronExe -NewName "EZSlicer.exe"
 
-$oldDist = Join-Path $distRoot ("ResinSlicer.old-" + (Get-Date -Format "yyyyMMddHHmmss"))
+$oldDist = Join-Path $distRoot ("EZSlicer.old-" + (Get-Date -Format "yyyyMMddHHmmss"))
 if (Test-Path $appDist) {
     try {
         Rename-Item -LiteralPath $appDist -NewName (Split-Path -Leaf $oldDist) -ErrorAction Stop
     } catch {
-        Write-Error "Could not replace the existing app. Close every running ResinSlicer window and rerun this script. The staged build is at: $nextDist"
+        Write-Error "Could not replace the existing app. Close every running EZSlicer window and rerun this script. The staged build is at: $nextDist"
     }
 }
-Rename-Item -LiteralPath $nextDist -NewName "ResinSlicer"
+Rename-Item -LiteralPath $nextDist -NewName "EZSlicer"
 if (Test-Path $oldDist) {
     try {
         Remove-Item -LiteralPath $oldDist -Recurse -Force -ErrorAction Stop
@@ -93,4 +93,4 @@ if (Test-Path $oldDist) {
 }
 
 Write-Host "Built portable Electron app:"
-Write-Host (Join-Path $appDist "ResinSlicer.exe")
+Write-Host (Join-Path $appDist "EZSlicer.exe")

@@ -6,20 +6,122 @@ const { createReadStream } = require("fs");
 const path = require("path");
 
 const repoRoot = path.resolve(__dirname, "..");
+const appIconPath = path.join(repoRoot, "src", "assets", "app", "app-icon.ico");
 const devServerUrl = process.env.VITE_DEV_SERVER_URL || "";
 const isDev = Boolean(devServerUrl);
 const uvtoolsPrinterApiUrl = "https://api.github.com/repos/sn4k3/UVtools/contents/PrusaSlicer/printer?ref=master";
 const uvtoolsRawBaseUrl = "https://raw.githubusercontent.com/sn4k3/UVtools/master/";
 
+// The hidden launcher shows its own splash before Node starts, so Electron only
+// shows one when started another way (packaged exe, npm start).
+const externalSplash = process.env.EZSLICER_EXTERNAL_SPLASH === "1";
+const SPLASH_LINGER_MS = 1800;
+let mainWindow = null;
+let splashWindow = null;
+
+app.setAppUserModelId("org.janelia.ezslicer");
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
+// Window size/position persisted to a small JSON file in userData.
+function windowStatePath() {
+  return path.join(app.getPath("userData"), "window-state.json");
+}
+
+function loadWindowState() {
+  const fallback = { width: 1280, height: 820, maximized: false };
+  try {
+    const saved = JSON.parse(fsSync.readFileSync(windowStatePath(), "utf8"));
+    const state = { ...fallback, ...saved };
+    if (Number.isFinite(state.x) && Number.isFinite(state.y)) {
+      // Drop the saved position if no current display contains it (monitor unplugged).
+      const { screen } = require("electron");
+      const visible = screen.getAllDisplays().some(({ workArea: a }) =>
+        state.x + 80 > a.x && state.x < a.x + a.width - 80 && state.y >= a.y - 10 && state.y < a.y + a.height - 60);
+      if (!visible) {
+        delete state.x;
+        delete state.y;
+      }
+    }
+    return state;
+  } catch {
+    return fallback;
+  }
+}
+
+function trackWindowState(win) {
+  let saveTimer = null;
+  const save = () => {
+    if (win.isDestroyed()) return;
+    const bounds = win.getNormalBounds();
+    const state = { ...bounds, maximized: win.isMaximized() };
+    try {
+      fsSync.mkdirSync(path.dirname(windowStatePath()), { recursive: true });
+      fsSync.writeFileSync(windowStatePath(), JSON.stringify(state));
+    } catch {
+      // Losing the saved size is harmless.
+    }
+  };
+  const queue = () => {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(save, 400);
+  };
+  win.on("resize", queue);
+  win.on("move", queue);
+  win.on("maximize", queue);
+  win.on("unmaximize", queue);
+  win.on("close", save);
+}
+
+function createSplashWindow() {
+  splashWindow = new BrowserWindow({
+    width: 420,
+    height: 220,
+    frame: false,
+    resizable: false,
+    movable: true,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    show: false,
+    icon: appIconPath,
+    backgroundColor: "#151a20",
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+  });
+  splashWindow.once("ready-to-show", () => splashWindow && splashWindow.show());
+  splashWindow.on("closed", () => {
+    splashWindow = null;
+  });
+  splashWindow.loadFile(path.join(repoRoot, "src", "assets", "splash", "splash.html"));
+}
+
+function closeSplashSoon() {
+  setTimeout(() => {
+    if (splashWindow && !splashWindow.isDestroyed()) splashWindow.close();
+  }, SPLASH_LINGER_MS);
+}
+
 function createWindow() {
+  const state = loadWindowState();
   const win = new BrowserWindow({
-    width: 1280,
-    height: 820,
+    width: state.width,
+    height: state.height,
+    ...(Number.isFinite(state.x) && Number.isFinite(state.y) ? { x: state.x, y: state.y } : {}),
     minWidth: 1040,
     minHeight: 700,
+    title: "EZSlicer",
     show: false,
     autoHideMenuBar: true,
-    icon: path.join(repoRoot, "assets", "resin-slicer.ico"),
+    icon: appIconPath,
     backgroundColor: "#111418",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -28,9 +130,17 @@ function createWindow() {
     }
   });
 
+  mainWindow = win;
+  trackWindowState(win);
+  win.on("closed", () => {
+    if (mainWindow === win) mainWindow = null;
+  });
+
   win.once("ready-to-show", () => {
+    if (state.maximized) win.maximize();
     win.show();
     win.focus();
+    closeSplashSoon();
   });
 
   if (isDev) {
@@ -41,7 +151,9 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
   Menu.setApplicationMenu(null);
+  if (!externalSplash) createSplashWindow();
   createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -50,7 +162,7 @@ app.whenReady().then(() => {
 
 process.on("uncaughtException", (error) => {
   showAppPrompt({
-    title: "Resin Slicer Error",
+    title: "EZSlicer Error",
     message: error.message || String(error),
     detail: error.stack || "",
     kind: "error"
@@ -60,7 +172,7 @@ process.on("uncaughtException", (error) => {
 process.on("unhandledRejection", (reason) => {
   const message = reason && reason.stack ? reason.stack : String(reason);
   showAppPrompt({
-    title: "Resin Slicer Error",
+    title: "EZSlicer Error",
     message: reason && reason.message ? reason.message : String(reason),
     detail: message,
     kind: "error"
@@ -100,12 +212,12 @@ ipcMain.handle("dialog:save-output", async (_event, format) => {
 });
 
 ipcMain.handle("dialog:save-project", async (_event, defaultName, content) => {
-  const safeName = String(defaultName || "resin-slicer-project.json").replace(/[\\/:*?"<>|]+/g, "-");
+  const safeName = String(defaultName || "ezslicer-project.json").replace(/[\\/:*?"<>|]+/g, "-");
   const result = await dialog.showSaveDialog({
     title: "Save project",
     defaultPath: safeName.endsWith(".json") ? safeName : `${safeName}.json`,
     filters: [
-      { name: "Resin Slicer Project", extensions: ["json"] },
+      { name: "EZSlicer Project", extensions: ["json"] },
       { name: "All Files", extensions: ["*"] }
     ]
   });
@@ -119,7 +231,7 @@ ipcMain.handle("dialog:open-project", async () => {
     title: "Open project",
     properties: ["openFile"],
     filters: [
-      { name: "Resin Slicer Project", extensions: ["json"] },
+      { name: "EZSlicer Project", extensions: ["json"] },
       { name: "All Files", extensions: ["*"] }
     ]
   });
@@ -368,8 +480,8 @@ function showStandalonePrompt(payload) {
     resizable: false,
     minimizable: false,
     maximizable: false,
-    title: payload.title || "Resin Slicer",
-    icon: path.join(repoRoot, "assets", "resin-slicer.ico"),
+    title: payload.title || "EZSlicer",
+    icon: appIconPath,
     backgroundColor: "#181d23",
     autoHideMenuBar: true,
     webPreferences: {
@@ -382,7 +494,7 @@ function showStandalonePrompt(payload) {
 }
 
 function standalonePromptHtml(payload) {
-  const title = escapeHtml(payload.title || "Resin Slicer");
+  const title = escapeHtml(payload.title || "EZSlicer");
   const message = escapeHtml(payload.message || "Something needs your attention.");
   const detail = escapeHtml(payload.detail || "");
   const detailBlock = detail ? `<pre>${detail}</pre>` : "";

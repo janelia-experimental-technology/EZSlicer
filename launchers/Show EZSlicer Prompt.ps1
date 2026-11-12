@@ -1,5 +1,5 @@
 param(
-    [string]$Title = "Resin Slicer",
+    [string]$Title = "EZSlicer",
     [string]$Message = "",
     [string]$MessageFile = ""
 )
@@ -13,8 +13,8 @@ if ($MessageFile -and (Test-Path -LiteralPath $MessageFile)) {
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Windows.Forms
 
-$iconPath = Join-Path $PSScriptRoot "assets\resin-slicer.ico"
-$pngPath = Join-Path $PSScriptRoot "assets\resin-slicer-icon-256.png"
+$iconPath = Join-Path $PSScriptRoot "..\src\assets\app\app-icon.ico"
+$pngPath = Join-Path $PSScriptRoot "..\src\assets\app\app-icon-256.png"
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = $Title

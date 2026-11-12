@@ -2,8 +2,8 @@ $ErrorActionPreference = "Stop"
 
 $root = Split-Path -Parent $PSScriptRoot
 $csc = Join-Path $env:WINDIR "Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-$source = Join-Path $root "launcher\ResinSlicerLauncher.cs"
-$output = Join-Path $root "ResinSlicer.exe"
+$source = Join-Path $root "launcher\EZSlicerLauncher.cs"
+$output = Join-Path $root "EZSlicer.exe"
 
 if (!(Test-Path $csc)) {
     throw "Could not find .NET Framework C# compiler at $csc"

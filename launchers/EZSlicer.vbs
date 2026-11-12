@@ -1,23 +1,24 @@
 Option Explicit
 
-Dim shell, fso, root, packagePath, electronPath, vitePath, concurrentlyPath, waitOnPath, crossEnvPath, splashPath, promptPath, readyPath
+Dim shell, fso, launcherDir, root, packagePath, electronPath, vitePath, concurrentlyPath, waitOnPath, crossEnvPath, splashPath, promptPath, readyPath
 Dim nodeCheck, npmCheck, installExit, waited, depsMissing
 
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 
-root = fso.GetParentFolderName(WScript.ScriptFullName)
+launcherDir = fso.GetParentFolderName(WScript.ScriptFullName)
+root = fso.GetParentFolderName(launcherDir)
 packagePath = fso.BuildPath(root, "package.json")
 electronPath = fso.BuildPath(root, "node_modules\electron")
 vitePath = fso.BuildPath(root, "node_modules\vite")
 concurrentlyPath = fso.BuildPath(root, "node_modules\concurrently")
 waitOnPath = fso.BuildPath(root, "node_modules\wait-on")
 crossEnvPath = fso.BuildPath(root, "node_modules\cross-env")
-splashPath = fso.BuildPath(root, "Show Resin Slicer Splash.ps1")
-promptPath = fso.BuildPath(root, "Show Resin Slicer Prompt.ps1")
+splashPath = fso.BuildPath(launcherDir, "Show EZSlicer Splash.ps1")
+promptPath = fso.BuildPath(launcherDir, "Show EZSlicer Prompt.ps1")
 
 If fso.FileExists(splashPath) Then
-    readyPath = fso.BuildPath(shell.ExpandEnvironmentStrings("%TEMP%"), "resin-slicer-splash-" & Replace(CStr(Timer), ".", "") & ".ready")
+    readyPath = fso.BuildPath(shell.ExpandEnvironmentStrings("%TEMP%"), "ezslicer-splash-" & Replace(CStr(Timer), ".", "") & ".ready")
     If fso.FileExists(readyPath) Then
         fso.DeleteFile readyPath, True
     End If
@@ -42,7 +43,7 @@ End If
 
 nodeCheck = shell.Run("cmd.exe /d /c where node.exe >nul 2>nul", 0, True)
 If nodeCheck <> 0 Then
-    ShowThemedPrompt "Node.js is required to run Resin Slicer from source." & vbCrLf & vbCrLf & _
+    ShowThemedPrompt "Node.js is required to run EZSlicer from source." & vbCrLf & vbCrLf & _
                      "Install the LTS build from https://nodejs.org, or run this in PowerShell:" & vbCrLf & _
                      "    winget install OpenJS.NodeJS.LTS" & vbCrLf & vbCrLf & _
                      "After installing, sign out and back in (or reboot) so Node is on PATH," & vbCrLf & _
@@ -66,28 +67,30 @@ depsMissing = Not fso.FolderExists(electronPath) Or _
 If depsMissing Then
     installExit = shell.Run("cmd.exe /d /c cd /d """ & root & """ && npm.cmd install", 0, True)
     If installExit <> 0 Then
-        ShowThemedPrompt "Resin Slicer development dependency installation failed." & vbCrLf & _
+        ShowThemedPrompt "EZSlicer development dependency installation failed." & vbCrLf & _
                          "Run npm install manually in:" & vbCrLf & root
         WScript.Quit installExit
     End If
 End If
 
+' Tell Electron the launcher splash is already up so it does not show a second one.
+shell.Environment("Process")("EZSLICER_EXTERNAL_SPLASH") = "1"
 shell.Run "cmd.exe /d /c cd /d """ & root & """ && npm.cmd run dev", 0, False
 
 Sub ShowThemedPrompt(message)
     Dim messagePath, file
 
     If Not fso.FileExists(promptPath) Then
-        MsgBox message, vbCritical, "Resin Slicer"
+        MsgBox message, vbCritical, "EZSlicer"
         Exit Sub
     End If
 
-    messagePath = fso.BuildPath(shell.ExpandEnvironmentStrings("%TEMP%"), "resin-slicer-prompt-" & Replace(CStr(Timer), ".", "") & ".txt")
+    messagePath = fso.BuildPath(shell.ExpandEnvironmentStrings("%TEMP%"), "ezslicer-prompt-" & Replace(CStr(Timer), ".", "") & ".txt")
     Set file = fso.CreateTextFile(messagePath, True, False)
     file.Write message
     file.Close
 
-    shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & promptPath & """ -Title ""Resin Slicer"" -MessageFile """ & messagePath & """", 0, True
+    shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File """ & promptPath & """ -Title ""EZSlicer"" -MessageFile """ & messagePath & """", 0, True
 
     If fso.FileExists(messagePath) Then
         fso.DeleteFile messagePath, True
