@@ -16,6 +16,15 @@ contextBridge.exposeInMainWorld("slicer", {
   profiles: () => ipcRenderer.invoke("bridge:profiles"),
   preview: (payload) => ipcRenderer.invoke("bridge:preview", payload),
   slice: (payload) => ipcRenderer.invoke("bridge:slice", payload),
+  discoverPrinters: (targets) => ipcRenderer.invoke("printer:discover", { targets }),
+  printerStatus: (printer) => ipcRenderer.invoke("printer:status", printer),
+  printerControl: (printer, action) => ipcRenderer.invoke("printer:control", printer, action),
+  sendToPrinter: (payload) => ipcRenderer.invoke("printer:send", payload),
+  onPrinterProgress: (callback) => {
+    const listener = (_event, message) => callback(message);
+    ipcRenderer.on("printer:progress", listener);
+    return () => ipcRenderer.removeListener("printer:progress", listener);
+  },
   onSliceProgress: (callback) => {
     const listener = (_event, message) => callback(message);
     ipcRenderer.on("slice:progress", listener);

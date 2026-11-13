@@ -370,6 +370,13 @@ ipcMain.handle("bridge:preview", async (event, payload) => {
 ipcMain.handle("bridge:slice", async (event, payload) => {
   return runBridge("slice", payload, (message) => event.sender.send("slice:progress", message));
 });
+// Network printers (ChiTu UDP / Elegoo SDCP); see resin_slicer/network_printers.py.
+ipcMain.handle("printer:discover", async (_event, payload) => runBridge("printer-discover", payload));
+ipcMain.handle("printer:status", async (_event, printer) => runBridge("printer-status", { printer }));
+ipcMain.handle("printer:control", async (_event, printer, action) => runBridge("printer-control", { printer, action }));
+ipcMain.handle("printer:send", async (event, payload) => {
+  return runBridge("printer-send", payload, (message) => event.sender.send("printer:progress", message));
+});
 
 let cachedPython = null;
 

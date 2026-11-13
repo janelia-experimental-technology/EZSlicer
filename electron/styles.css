@@ -135,12 +135,16 @@ body {
 
 .topbar label {
   margin: 0;
-  min-width: 0;
-  width: min(220px, 26vw);
+  /* The profile pickers give up width first so the menu buttons never clip. */
+  flex: 1 1 220px;
+  min-width: 64px;
+  max-width: 220px;
+  width: auto;
 }
 
 .topbar-resin-label {
-  width: min(180px, 20vw);
+  flex-basis: 180px;
+  max-width: 180px;
 }
 
 .topbar button {
@@ -151,7 +155,15 @@ body {
 
 .topbar-menu {
   position: relative;
-  min-width: 0;
+  flex: none;
+}
+
+/* Menus at the right end of the top bar open leftward, over the viewer,
+   instead of under the right-hand sidebar. */
+#settingsTopbarMenu,
+#printersTopbarMenu {
+  left: auto;
+  right: 0;
 }
 
 .topbar-menu-button {
@@ -245,6 +257,127 @@ body {
 .compact-button {
   width: auto;
   min-width: 70px;
+}
+
+/* Network printers */
+.printers-menu {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.printer-list {
+  display: grid;
+  gap: 6px;
+}
+
+.printer-list[hidden] {
+  display: none;
+}
+
+.printer-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid #2b333d;
+  background: #151a20;
+}
+
+.printer-row-name {
+  font-weight: 600;
+  color: #eef2f5;
+  overflow-wrap: anywhere;
+}
+
+.printer-row-meta,
+.printer-hint,
+.printer-empty {
+  color: #8b98a5;
+  font-size: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.printer-row-status {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #aab5bf;
+}
+
+.printer-row-status::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #56606b;
+  flex: none;
+}
+
+.printer-row-status.idle::before { background: #4fd18b; }
+.printer-row-status.printing::before { background: #7aece0; }
+.printer-row-status.paused::before,
+.printer-row-status.busy::before { background: #ffb454; }
+.printer-row-status.error { color: #ffb4b4; }
+.printer-row-status.error::before { background: #e05a5a; }
+
+.printer-row-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.printer-row > button,
+.printer-row-actions button,
+.printer-list-actions button {
+  width: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.printer-list-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.send-printer {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #2b333d;
+}
+
+.send-printer-progress {
+  display: grid;
+  gap: 4px;
+}
+
+.send-printer-progress[hidden] {
+  display: none;
+}
+
+.send-printer-bar {
+  height: 6px;
+  background: #2b333d;
+  overflow: hidden;
+}
+
+.send-printer-bar span {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #7aece0;
+  transition: width 0.2s ease;
+}
+
+.send-printer-progress small {
+  color: #aab5bf;
+  font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .viewer-shell {

@@ -131,6 +131,29 @@
               </section>
             </section>
           </div>
+          <div class="topbar-menu">
+            <button id="printersButton" class="topbar-menu-button" type="button" data-topbar-menu-button="printersTopbarMenu" aria-expanded="false">Printers</button>
+            <section id="printersTopbarMenu" class="topbar-menu-panel settings-menu printers-menu" hidden>
+              <section class="settings-menu-section">
+                <h2>Network printers</h2>
+                <div id="printerList" class="printer-list"></div>
+                <div class="printer-list-actions">
+                  <button id="refreshPrintersButton" type="button">Refresh Status</button>
+                  <button id="findPrintersButton" type="button">Find Printers</button>
+                </div>
+                <div id="printerFindResults" class="printer-list" hidden></div>
+              </section>
+              <section class="settings-menu-section">
+                <h2>Add by IP</h2>
+                <div class="grid two">
+                  <label>Name <input id="printerNameInput" type="text" placeholder="Optional"></label>
+                  <label>IP address <input id="printerIpInput" type="text" inputmode="decimal" placeholder="192.168.1.50"></label>
+                </div>
+                <button id="addPrinterButton" type="button">Add Printer</button>
+                <p class="printer-hint">Elegoo/ChiTu printers on the network: older boards (Jupiter, Saturn, Mars 2/3) and SDCP models (Mars 5 Ultra, Saturn 4 Ultra). The type is detected when you add one.</p>
+              </section>
+            </section>
+          </div>
         </nav>
 
         <section class="viewer-shell">
@@ -209,6 +232,15 @@
             <button id="saveButton" type="button">Choose Output</button>
           </div>
           <label>Output <input id="outputPath"></label>
+          <div class="send-printer">
+            <label>Send to printer <select id="sendPrinterSelect"></select></label>
+            <label class="check"><input id="startAfterUpload" type="checkbox"> Start printing after upload</label>
+            <button id="sendToPrinterButton" type="button">Send to Printer</button>
+            <div id="sendPrinterProgress" class="send-printer-progress" hidden>
+              <div class="send-printer-bar"><span></span></div>
+              <small></small>
+            </div>
+          </div>
         </section>
 
         <section class="actions right-menu-section active-menu-section" data-right-menu-section="job">

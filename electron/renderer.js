@@ -308,6 +308,7 @@ async function init() {
   $("messageHistoryClearButton").addEventListener("click", clearMessageHistory);
   $("sliceButton").addEventListener("click", slice);
   $("sliceAllButton").addEventListener("click", sliceAll);
+  initNetworkPrinters();
   $("viewSliceButton").addEventListener("click", toggleSlicePreview);
   $("slicePreviewCloseButton").addEventListener("click", exitSlicePreview);
   $("slicePreviewViewport").addEventListener("wheel", (event) => {
@@ -4618,6 +4619,7 @@ async function slicePlates(platesToSlice, { forceSuffix = false, label = "Slicin
       log(`Slicing ${plate.name}...`);
       const result = await window.slicer.slice(payload);
       plate.sliced = true;
+      plate.slicedOutputPath = result.outputPath || payload.outputPath || "";
       plate.sliceLayerCount = result.layers || 0;
       plate.previewDir = result.previewDir || null;
       log(`Done ${plate.name}: ${result.outputPath}`);
@@ -6636,6 +6638,7 @@ function setBusy(busy) {
   $("sliceButton").disabled = busy;
   $("sliceAllButton").disabled = busy;
   $("saveAllButton").disabled = busy;
+  updateSendPrinterControls();
   $("viewSliceButton").disabled = busy || !activePlate().sliced;
 }
 
@@ -9498,6 +9501,344 @@ function length(a) {
 function normalize(a) {
   const len = length(a) || 1;
   return [a[0] / len, a[1] / len, a[2] / len];
+}
+
+// ---------------------------------------------------------------------------
+// Network printers: saved per machine in localStorage; the Python bridge does
+// the talking (resin_slicer/network_printers.py).
+// ---------------------------------------------------------------------------
+
+const PRINTER_STORAGE_KEY = "resinSlicer.networkPrinters";
+const PRINTER_SELECTED_KEY = "resinSlicer.selectedPrinter";
+const PROTOCOL_LABELS = { chitu: "ChiTu LAN", sdcp: "Elegoo SDCP" };
+let networkPrinters = [];
+const printerStatuses = new Map();
+let printerSendActive = false;
+
+function initNetworkPrinters() {
+  networkPrinters = (readStoredJson(PRINTER_STORAGE_KEY, []) || []).filter((item) => item && item.ip);
+  $("addPrinterButton").addEventListener("click", addPrinterFromForm);
+  $("printerIpInput").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") addPrinterFromForm();
+  });
+  $("findPrintersButton").addEventListener("click", findPrinters);
+  $("refreshPrintersButton").addEventListener("click", () => refreshPrinterStatuses());
+  $("printersButton").addEventListener("click", () => {
+    // The shared topbar handler may run after this one; check once it has toggled.
+    setTimeout(() => {
+      if (!$("printersTopbarMenu").hidden) refreshPrinterStatuses();
+    }, 0);
+  });
+  $("sendToPrinterButton").addEventListener("click", sendActivePlateToPrinter);
+  $("sendPrinterSelect").addEventListener("change", () => {
+    try {
+      localStorage.setItem(PRINTER_SELECTED_KEY, $("sendPrinterSelect").value);
+    } catch {
+      // Remembering the choice is a convenience only.
+    }
+  });
+  window.slicer.onPrinterProgress((message) => showSendProgress(message.message, message.fraction));
+  renderPrinters();
+}
+
+function savePrinters() {
+  writeStoredJson(PRINTER_STORAGE_KEY, networkPrinters);
+  renderPrinters();
+}
+
+function printerLabel(printer) {
+  return printer.name || printer.model || `Printer at ${printer.ip}`;
+}
+
+function bridgePrinter(printer) {
+  return { ip: printer.ip, protocol: printer.protocol, mainboardId: printer.mainboardId || "" };
+}
+
+function renderPrinters() {
+  const list = $("printerList");
+  list.replaceChildren();
+  if (!networkPrinters.length) {
+    const empty = document.createElement("p");
+    empty.className = "printer-empty";
+    empty.textContent = "No printers yet. Find them on the network or add one by IP address.";
+    list.append(empty);
+  }
+  for (const printer of networkPrinters) list.append(printerRow(printer));
+  renderSendPrinterSelect();
+}
+
+function printerRow(printer) {
+  const row = document.createElement("div");
+  row.className = "printer-row";
+  const name = document.createElement("div");
+  name.className = "printer-row-name";
+  name.textContent = printerLabel(printer);
+  const meta = document.createElement("div");
+  meta.className = "printer-row-meta";
+  meta.textContent = [printer.ip, printer.model, PROTOCOL_LABELS[printer.protocol] || printer.protocol].filter(Boolean).join(" · ");
+  const head = document.createElement("div");
+  head.append(name, meta);
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.className = "danger";
+  remove.textContent = "Remove";
+  remove.addEventListener("click", () => removePrinter(printer));
+  row.append(head, remove);
+
+  const status = printerStatuses.get(printer.id);
+  const statusLine = document.createElement("div");
+  statusLine.className = `printer-row-status ${status ? (status.error ? "error" : status.state) : ""}`;
+  statusLine.textContent = status ? (status.error || status.detail || status.state) : "Status not checked";
+  row.append(statusLine);
+
+  if (status && (status.state === "printing" || status.state === "paused")) {
+    const actions = document.createElement("div");
+    actions.className = "printer-row-actions";
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.textContent = status.state === "paused" ? "Resume" : "Pause";
+    toggle.addEventListener("click", () => controlPrinter(printer, status.state === "paused" ? "resume" : "pause"));
+    const stop = document.createElement("button");
+    stop.type = "button";
+    stop.className = "danger";
+    stop.textContent = "Stop Print";
+    stop.addEventListener("click", () => controlPrinter(printer, "stop"));
+    actions.append(toggle, stop);
+    row.append(actions);
+  }
+  return row;
+}
+
+function renderSendPrinterSelect() {
+  const select = $("sendPrinterSelect");
+  let remembered = "";
+  try {
+    remembered = localStorage.getItem(PRINTER_SELECTED_KEY) || "";
+  } catch {
+    remembered = "";
+  }
+  const current = select.value || remembered;
+  select.replaceChildren();
+  if (!networkPrinters.length) {
+    select.append(new Option("No printers - add one under Printers", ""));
+  }
+  for (const printer of networkPrinters) {
+    select.append(new Option(`${printerLabel(printer)} (${printer.ip})`, printer.id));
+  }
+  if (networkPrinters.some((printer) => printer.id === current)) select.value = current;
+  updateSendPrinterControls();
+}
+
+function updateSendPrinterControls() {
+  const button = $("sendToPrinterButton");
+  if (!button) return;
+  button.disabled = printerSendActive || isBusy || !networkPrinters.length;
+}
+
+function isValidIp(value) {
+  const parts = String(value).trim().split(".");
+  return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
+}
+
+async function addPrinterFromForm() {
+  if ($("addPrinterButton").disabled) return;
+  // Read both fields now: the form may change while we wait on the network.
+  const ip = $("printerIpInput").value.trim();
+  const name = $("printerNameInput").value.trim();
+  if (!isValidIp(ip)) {
+    logAndPrompt("Invalid IP Address", "Enter the printer's IPv4 address, for example 192.168.1.50. It is shown in the printer's network settings.");
+    return;
+  }
+  if (networkPrinters.some((printer) => printer.ip === ip)) {
+    logAndPrompt("Printer Already Added", `${ip} is already in the printer list.`);
+    return;
+  }
+  const button = $("addPrinterButton");
+  button.disabled = true;
+  button.textContent = "Checking...";
+  try {
+    const result = await window.slicer.discoverPrinters([ip]);
+    const found = (result.printers || []).find((item) => item.ip === ip);
+    if (!found) {
+      throw new Error(`No printer answered at ${ip}. Check the address, that the printer's network is on, and that this computer can reach it.`);
+    }
+    addDiscoveredPrinter(found, name);
+    if ($("printerIpInput").value.trim() === ip) {
+      $("printerIpInput").value = "";
+      $("printerNameInput").value = "";
+    }
+  } catch (error) {
+    log(`Add printer failed: ${error.message}`);
+    showErrorPrompt("Printer Not Found", error);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Add Printer";
+  }
+}
+
+function addDiscoveredPrinter(found, name = "") {
+  const printer = {
+    id: `printer-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
+    name: name || (found.model ? `${found.model} (${found.ip.split(".").pop()})` : ""),
+    ip: found.ip,
+    protocol: found.protocol,
+    mainboardId: found.mainboard_id || "",
+    model: found.model || "",
+    firmware: found.firmware || ""
+  };
+  networkPrinters.push(printer);
+  savePrinters();
+  log(`Added printer ${printerLabel(printer)} at ${printer.ip} (${PROTOCOL_LABELS[printer.protocol] || printer.protocol}).`);
+  playSound("confirm");
+  refreshPrinterStatuses([printer]);
+}
+
+async function findPrinters() {
+  const button = $("findPrintersButton");
+  const results = $("printerFindResults");
+  button.disabled = true;
+  button.textContent = "Searching...";
+  try {
+    const result = await window.slicer.discoverPrinters(networkPrinters.map((printer) => printer.ip));
+    const fresh = (result.printers || []).filter((found) => !networkPrinters.some((printer) => printer.ip === found.ip));
+    results.replaceChildren();
+    results.hidden = false;
+    if (!fresh.length) {
+      const empty = document.createElement("p");
+      empty.className = "printer-empty";
+      empty.textContent = (result.printers || []).length
+        ? "Every printer that answered is already in the list."
+        : "No printers answered. Printers on another subnet will not hear the search; add those by IP.";
+      results.append(empty);
+    }
+    for (const found of fresh) {
+      const row = document.createElement("div");
+      row.className = "printer-row";
+      const head = document.createElement("div");
+      const name = document.createElement("div");
+      name.className = "printer-row-name";
+      name.textContent = found.model || found.name || "Printer";
+      const meta = document.createElement("div");
+      meta.className = "printer-row-meta";
+      meta.textContent = [found.ip, PROTOCOL_LABELS[found.protocol] || found.protocol, found.firmware].filter(Boolean).join(" · ");
+      head.append(name, meta);
+      const add = document.createElement("button");
+      add.type = "button";
+      add.textContent = "Add";
+      add.addEventListener("click", () => {
+        row.remove();
+        if (!results.children.length) results.hidden = true;
+        addDiscoveredPrinter(found);
+      });
+      row.append(head, add);
+      results.append(row);
+    }
+    log(`Printer search: ${(result.printers || []).length} answered, ${fresh.length} new.`);
+  } catch (error) {
+    log(`Printer search failed: ${error.message}`);
+    showErrorPrompt("Printer Search Failed", error);
+  } finally {
+    button.disabled = false;
+    button.textContent = "Find Printers";
+  }
+}
+
+async function removePrinter(printer) {
+  const ok = await showThemedConfirm({
+    title: "Remove Printer",
+    message: `Remove ${printerLabel(printer)} (${printer.ip}) from EZSlicer?`,
+    detail: "This only removes it from this list. Nothing on the printer changes.",
+    confirmText: "Remove",
+    kind: "warning"
+  });
+  if (!ok) return;
+  networkPrinters = networkPrinters.filter((item) => item.id !== printer.id);
+  printerStatuses.delete(printer.id);
+  savePrinters();
+  playSound("delete");
+}
+
+async function refreshPrinterStatuses(targets = networkPrinters) {
+  await Promise.all(targets.map(async (printer) => {
+    try {
+      const result = await window.slicer.printerStatus(bridgePrinter(printer));
+      printerStatuses.set(printer.id, result.status);
+    } catch (error) {
+      printerStatuses.set(printer.id, { state: "unknown", error: `Not reachable: ${error.message}` });
+    }
+  }));
+  renderPrinters();
+}
+
+async function controlPrinter(printer, action) {
+  if (action === "stop") {
+    const ok = await showThemedConfirm({
+      title: "Stop Print",
+      message: `Stop the print on ${printerLabel(printer)}?`,
+      detail: "The print cannot be resumed after it is stopped.",
+      confirmText: "Stop Print",
+      kind: "warning"
+    });
+    if (!ok) return;
+  }
+  try {
+    const result = await window.slicer.printerControl(bridgePrinter(printer), action);
+    printerStatuses.set(printer.id, result.status);
+    log(`${printerLabel(printer)}: ${action} sent.`);
+  } catch (error) {
+    log(`Printer ${action} failed: ${error.message}`);
+    showErrorPrompt(`Could Not ${action[0].toUpperCase()}${action.slice(1)}`, error);
+  }
+  renderPrinters();
+}
+
+function showSendProgress(message, fraction) {
+  const box = $("sendPrinterProgress");
+  box.hidden = false;
+  box.querySelector("span").style.width = `${Math.round(Math.max(0, Math.min(1, Number(fraction) || 0)) * 100)}%`;
+  box.querySelector("small").textContent = message || "";
+}
+
+async function sendActivePlateToPrinter() {
+  const printer = networkPrinters.find((item) => item.id === $("sendPrinterSelect").value);
+  if (!printer) {
+    logAndPrompt("No Printer Selected", "Add a printer under Printers, then pick it here.");
+    return;
+  }
+  const plate = activePlate();
+  if (!plate.sliced || !plate.slicedOutputPath) {
+    logAndPrompt("Slice First", `Slice ${plate.name} before sending it. The printer receives the sliced ${$("format").value.toUpperCase()} file.`);
+    return;
+  }
+  const start = $("startAfterUpload").checked;
+  if (start) {
+    const ok = await showThemedConfirm({
+      title: "Upload and Start Printing",
+      message: `Upload ${fileName(plate.slicedOutputPath)} to ${printerLabel(printer)} and start printing right away?`,
+      detail: "Check the vat has enough resin, the build plate is clean and locked, and the file was sliced with this printer's machine profile.",
+      confirmText: "Upload and Print",
+      kind: "warning"
+    });
+    if (!ok) return;
+  }
+  printerSendActive = true;
+  updateSendPrinterControls();
+  showSendProgress(`Connecting to ${printerLabel(printer)}...`, 0);
+  playSound("click-crisp");
+  try {
+    const result = await window.slicer.sendToPrinter({ printer: bridgePrinter(printer), path: plate.slicedOutputPath, start });
+    showSendProgress(`${result.started ? "Printing" : "Uploaded"} ${result.remoteName} on ${printerLabel(printer)}`, 1);
+    log(`${result.started ? "Started" : "Uploaded"} ${result.remoteName} on ${printerLabel(printer)}.`);
+    playSound("success");
+    refreshPrinterStatuses([printer]);
+  } catch (error) {
+    showSendProgress(`Send failed: ${error.message}`, 0);
+    log(`Send to printer failed: ${error.message}`);
+    showErrorPrompt("Send to Printer Failed", error);
+  } finally {
+    printerSendActive = false;
+    updateSendPrinterControls();
+  }
 }
 
 init().catch((error) => {

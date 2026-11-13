@@ -16,6 +16,7 @@ from .cad_slicing import CadSliceModel
 from .config import PROFILES, PrintConfig, SupportConfig, profile
 from .errors import ConfigError, SlicerError
 from .mesh import Mesh, load_mesh
+from . import network_printers
 from .pipeline import SliceJob, slice_to_file
 from .raster import LayerRaster, dilate_mask, mm_to_px
 from .slicing import prepare_mesh
@@ -36,19 +37,51 @@ from .transform import MeshTransform, apply_transform
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="JSON bridge for the Electron UI")
-    parser.add_argument("command", choices=["profiles", "preview", "slice"])
+    parser.add_argument(
+        "command",
+        choices=["profiles", "preview", "slice", "printer-discover", "printer-status", "printer-send", "printer-control"],
+    )
     args = parser.parse_args(argv)
     try:
         if args.command == "profiles":
             _write_json({"type": "profiles", "profiles": {name: asdict(cfg) for name, cfg in PROFILES.items()}})
         elif args.command == "preview":
             _preview(_read_json())
+        elif args.command.startswith("printer-"):
+            _printer_command(args.command, _read_json())
         else:
             _slice(_read_json())
     except Exception as exc:
         _write_json({"type": "error", "message": str(exc)})
         return 1
     return 0
+
+
+def _printer_command(command: str, request: dict[str, Any]) -> None:
+    if command == "printer-discover":
+        targets = [str(ip).strip() for ip in request.get("targets") or [] if str(ip).strip()]
+        printers = network_printers.discover(targets, timeout=float(request.get("timeout") or 2.5))
+        _write_json({"type": "printers", "printers": [printer.to_json() for printer in printers]})
+        return
+    printer = request.get("printer") or {}
+    if command == "printer-status":
+        with network_printers.connect(printer) as client:
+            _write_json({"type": "printer-status", "status": client.status().to_json()})
+    elif command == "printer-send":
+        result = network_printers.send_file(
+            printer,
+            str(request.get("path") or ""),
+            start=bool(request.get("start")),
+            progress=lambda message, fraction: _write_json({"type": "progress", "message": message, "fraction": fraction}),
+        )
+        _write_json({"type": "printer-sent", **result})
+    else:
+        action = str(request.get("action") or "")
+        if action not in ("pause", "resume", "stop"):
+            raise SlicerError(f"unknown printer action {action!r}")
+        with network_printers.connect(printer) as client:
+            getattr(client, action)()
+            _write_json({"type": "printer-status", "status": client.status().to_json()})
 
 
 def _read_json() -> dict[str, Any]:
