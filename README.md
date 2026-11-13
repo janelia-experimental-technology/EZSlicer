@@ -25,6 +25,20 @@ Outputs:
 - `dist\EZSlicer-Windows-Portable\`
 - `dist\EZSlicer-Windows-Portable.zip`
 
+## Versioning
+
+EZSlicer uses semantic versions tagged as `vX.Y.Z`. The version lives in `package.json`, `package-lock.json`, `pyproject.toml` and `resin_slicer/__init__.py`; the release script keeps them in step:
+
+```powershell
+npm run release -- patch          # bug fixes: 0.2.0 -> 0.2.1
+npm run release -- minor          # new features: 0.2.0 -> 0.3.0
+npm run release -- 1.0.0          # explicit version
+npm run release -- minor --dry-run   # preview the bump and change list
+npm run release -- minor --push      # also push the commit and tag
+```
+
+It refuses to run with uncommitted changes, runs the tests and build, bumps every version field, commits `Release vX.Y.Z`, and creates an annotated tag listing the commits since the previous tag. The app shows its version next to the title in the sidebar, and `python -m resin_slicer.cli --version` prints it.
+
 ## GUI Workflow
 
 1. Open one or more STL/OBJ/STP/STEP files, or drag mesh files into the 3D view.

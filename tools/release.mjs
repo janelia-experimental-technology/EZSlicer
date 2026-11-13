@@ -34,6 +34,13 @@ function run(command, commandArgs, options = {}) {
   return (output ?? "").toString().trim(); // null when stdio is inherited
 }
 
+// npm is a .cmd on Windows, which needs a shell; hand cmd.exe one fixed string
+// instead of shell:true + args (Node DEP0190).
+function npm(script) {
+  if (process.platform === "win32") return run("cmd.exe", ["/d", "/s", "/c", `npm run ${script}`], { stdio: "inherit" });
+  return run("npm", ["run", script], { stdio: "inherit" });
+}
+
 function git(...gitArgs) {
   return run("git", gitArgs);
 }
@@ -112,7 +119,7 @@ if (!flags.has("--skip-tests")) {
   console.log("\nRunning tests...");
   try {
     run("python", ["-m", "pytest", "-q"], { stdio: "inherit" });
-    run(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "check"], { stdio: "inherit", shell: process.platform === "win32" });
+    npm("check");
   } catch {
     fail("tests or build failed; nothing was changed");
   }
@@ -143,7 +150,7 @@ rewrite(files.pyInit, (text) => text.replace(/^(__version__\s*=\s*")[^"]+(")/m, 
 
 // Rebuild so the packaged renderer (dist/) shows the new version.
 try {
-  run(process.platform === "win32" ? "npm.cmd" : "npm", ["run", "build"], { stdio: "inherit", shell: process.platform === "win32" });
+  npm("build");
 } catch {
   console.warn("release: vite build failed after the bump; run `npm run build` before packaging.");
 }
