@@ -88,11 +88,20 @@ const previousTag = (() => {
     return "";
   }
 })();
-const range = previousTag ? `${previousTag}..HEAD` : "HEAD";
+// First tag: list only work since this fork split from upstream (if known).
+const upstreamBase = (() => {
+  if (previousTag) return "";
+  try {
+    return git("merge-base", "HEAD", "upstream/main");
+  } catch {
+    return "";
+  }
+})();
+const range = previousTag ? `${previousTag}..HEAD` : upstreamBase ? `${upstreamBase}..HEAD` : "HEAD";
 const changes = git("log", "--no-merges", "--format=- %s", range) || "- (no changes)";
 
 console.log(`EZSlicer ${current} -> ${version} (${tag})`);
-console.log(previousTag ? `Changes since ${previousTag}:` : "Changes (first tag):");
+console.log(previousTag ? `Changes since ${previousTag}:` : upstreamBase ? "Changes since the fork from upstream:" : "Changes (first tag):");
 console.log(changes);
 if (dryRun) {
   console.log("\n--dry-run: nothing changed.");
