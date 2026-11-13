@@ -49,7 +49,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $distRoot = Join-Path $root "dist"
 $appDist = Join-Path $distRoot "EZSlicer"
 $packageRoot = Join-Path $distRoot "EZSlicer-Windows-Portable"
-$zipPath = Join-Path $distRoot "EZSlicer-Windows-Portable.zip"
+$version = (Get-Content -Raw -LiteralPath (Join-Path $root "package.json") | ConvertFrom-Json).version
+$zipPath = Join-Path $distRoot "EZSlicer-Windows-Portable-$version.zip"
 
 if (!$SkipBuild) {
     & (Join-Path $PSScriptRoot "build_electron_portable.ps1")
@@ -72,18 +73,23 @@ Copy-Item -LiteralPath $appDist -Destination (Join-Path $packageRoot "EZSlicer")
 Copy-Item -LiteralPath (Join-Path $root "README.md") -Destination (Join-Path $packageRoot "README.md") -Force
 Copy-Item -LiteralPath (Join-Path $root "LICENSE") -Destination (Join-Path $packageRoot "LICENSE") -Force
 
-$launcher = @"
-@echo off
-cd /d "%~dp0EZSlicer"
-start "" "EZSlicer.exe"
-"@
-Set-Content -LiteralPath (Join-Path $packageRoot "Run EZSlicer.bat") -Value $launcher -Encoding ASCII
+# A .vbs runner, not a .bat: double-clicking it doesn't flash a terminal window.
+$launcher = @'
+Set shell = CreateObject("WScript.Shell")
+here = CreateObject("Scripting.FileSystemObject").GetParentFolderName(WScript.ScriptFullName)
+shell.CurrentDirectory = here & "\EZSlicer"
+shell.Run """" & here & "\EZSlicer\EZSlicer.exe""", 1, False
+'@
+Set-Content -LiteralPath (Join-Path $packageRoot "Run EZSlicer.vbs") -Value $launcher -Encoding ASCII
 
 if (Test-Path $zipPath) {
     Remove-Item -LiteralPath $zipPath -Force
 }
 Compress-Archive -Path (Join-Path $packageRoot "*") -DestinationPath $zipPath -Force
+$hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $zipPath).Hash.ToLowerInvariant()
+[System.IO.File]::WriteAllText("$zipPath.sha256", "$hash  $(Split-Path -Leaf $zipPath)`n")
 
 Write-Host "Packaged shareable build:"
 Write-Host $packageRoot
 Write-Host $zipPath
+Write-Host "$zipPath.sha256"

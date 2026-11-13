@@ -7,11 +7,13 @@
 //   npm run release -- 0.4.0            explicit version
 //   npm run release -- minor --push     also push the commit and tag to origin
 //   npm run release -- minor --dry-run  show what would change, touch nothing
-//   --skip-tests                        skip pytest + npm run check
+//   --skip-tests                        skip pytest (unit + engine contract tests) and npm run check
 //
 // Version lives in package.json, package-lock.json, pyproject.toml and
 // resin_slicer/__init__.py (__version__); all four are updated together.
 // Tags are "v<version>", annotated, with the commits since the previous tag.
+// Pushing a tag runs .github/workflows/release.yml, which builds the engine and app packages
+// (each with a .sha256) from the tag and attaches them to a GitHub release.
 
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
