@@ -104,6 +104,9 @@ def main(argv: list[str] | None = None) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Slice an STL, OBJ, STEP, or STP model for MSLA resin printers.")
+    from . import __version__
+
+    parser.add_argument("--version", action="version", version=f"EZSlicer {__version__}")
     parser.add_argument("input", help="input STL, OBJ, STEP, or STP file")
     parser.add_argument("-o", "--output", required=True, help="output .goo or .ctb path")
     parser.add_argument("--format", choices=["goo", "ctb"], help="output format; defaults to output extension")

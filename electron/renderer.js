@@ -309,6 +309,8 @@ async function init() {
   $("sliceButton").addEventListener("click", slice);
   $("sliceAllButton").addEventListener("click", sliceAll);
   initNetworkPrinters();
+  // Injected by vite.config.js from package.json.
+  $("appVersion").textContent = typeof __APP_VERSION__ === "string" ? `v${__APP_VERSION__}` : "";
   $("viewSliceButton").addEventListener("click", toggleSlicePreview);
   $("slicePreviewCloseButton").addEventListener("click", exitSlicePreview);
   $("slicePreviewViewport").addEventListener("wheel", (event) => {
