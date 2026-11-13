@@ -920,6 +920,7 @@ function machineProfileConfigFromForm() {
   const resin = currentResinProfile();
   return {
     machine_name: $("machineName").value.trim() || "Custom Printer",
+    output_format: $("machineOutputFormat").value || "",
     resolution_x: intNumber("resolutionX"),
     resolution_y: intNumber("resolutionY"),
     size_x_mm: number("sizeX"),
@@ -949,6 +950,7 @@ function applyMachineConfigToForm(cfg) {
   $("sizeX").value = cfg.size_x_mm ?? 120;
   $("sizeY").value = cfg.size_y_mm ?? 67.5;
   $("sizeZ").value = cfg.size_z_mm ?? 160;
+  $("machineOutputFormat").value = machineOutputFormat(cfg);
   // Layer height is a resin setting (applied via the resin profile), not a
   // machine setting, so selecting a printer leaves it untouched.
 }
@@ -5013,7 +5015,52 @@ function applyMachineProfile(flat) {
   changed += applyNumberValue("sizeX", flat, ["sizeX", "size_x_mm", "displayWidth", "display_width", "machineWidth", "buildPlateX", "buildVolumeX", "printX", "xSize"]);
   changed += applyNumberValue("sizeY", flat, ["sizeY", "size_y_mm", "displayHeight", "display_height", "machineDepth", "machineLength", "buildPlateY", "buildVolumeY", "printY", "ySize"]);
   changed += applyNumberValue("sizeZ", flat, ["sizeZ", "size_z_mm", "maxPrintHeight", "max_print_height", "machineHeight", "buildVolumeZ", "printZ", "zSize"]);
+  const format = outputFormatFromProfile(flat);
+  if (format.format) {
+    $("machineOutputFormat").value = format.format;
+    setOutputFormat(format.format, `this printer reads ${format.format.toUpperCase()} files`);
+    changed += 1;
+  } else if (format.unsupported) {
+    $("machineOutputFormat").value = "";
+    log(`Warning: this printer profile expects ${format.unsupported} files, which EZSlicer cannot write (it writes CTB and GOO).`);
+  }
   return changed;
+}
+
+// Output format per printer --------------------------------------------------
+
+const OUTPUT_FORMATS = ["ctb", "goo"];
+
+// Explicit profile setting wins; otherwise infer for models we know. The
+// original Elegoo Jupiter (ChiTu board) only reads encrypted CTB; the
+// Jupiter 2 reads GOO, so it is not matched here.
+function machineOutputFormat(cfg = {}) {
+  const explicit = String(cfg.output_format || "").toLowerCase();
+  if (OUTPUT_FORMATS.includes(explicit)) return explicit;
+  const name = String(cfg.machine_name || "");
+  if (/jupiter/i.test(name) && !/jupiter\s*2/i.test(name)) return "ctb";
+  return "";
+}
+
+function outputFormatFromProfile(flat) {
+  const direct = String(profileValue(flat, ["outputFormat", "output_format", "fileFormat", "file_format"]) || "").toLowerCase();
+  if (OUTPUT_FORMATS.includes(direct)) return { format: direct };
+  const notes = String(profileValue(flat, ["printerNotes", "printer_notes"]) || "");
+  const match = notes.match(/FILEFORMAT_([A-Z0-9.]+)/i);
+  if (!match) return {};
+  const tag = match[1].toUpperCase();
+  if (tag === "CTB" || tag === "ENCRYPTED.CTB") return { format: "ctb" };
+  if (tag === "GOO") return { format: "goo" };
+  return { unsupported: tag };
+}
+
+// Sets the Job format (and the output extension) if it differs.
+function setOutputFormat(format, reason = "") {
+  if (!OUTPUT_FORMATS.includes(format) || $("format").value === format) return false;
+  $("format").value = format;
+  $("format").dispatchEvent(new Event("change"));
+  log(`Output format set to ${format.toUpperCase()}${reason ? ` (${reason})` : ""}.`);
+  return true;
 }
 
 function applyResinProfile(flat) {
@@ -5294,6 +5341,8 @@ function loadProfileDefaults() {
   applyMachineConfigToForm(cfg);
   renderTopbarResinOptions($("profile").value);
   applyResinProfileToForm(selectedResinProfile($("profile").value));
+  const format = machineOutputFormat(cfg);
+  if (format) setOutputFormat(format, `${machineProfileLabel($("profile").value, cfg)} reads ${format.toUpperCase()} files`);
 }
 
 function requestSceneUpdate(options = {}) {
@@ -9511,6 +9560,29 @@ function normalize(a) {
 const PRINTER_STORAGE_KEY = "resinSlicer.networkPrinters";
 const PRINTER_SELECTED_KEY = "resinSlicer.selectedPrinter";
 const PROTOCOL_LABELS = { chitu: "ChiTu LAN", sdcp: "Elegoo SDCP" };
+// File types each network protocol's printers read. ChiTu-board printers
+// (e.g. the original Jupiter) only take encrypted CTB; SDCP printers read GOO
+// and CTB. First entry is the default when the Job format must change.
+const PROTOCOL_FORMATS = { chitu: ["ctb"], sdcp: ["goo", "ctb"] };
+
+function printerFormats(printer) {
+  return PROTOCOL_FORMATS[printer?.protocol] || OUTPUT_FORMATS;
+}
+
+function fileFormatOf(path) {
+  const match = String(path || "").match(/\.([a-z0-9]+)$/i);
+  return match ? match[1].toLowerCase() : "";
+}
+
+// Picking a printer moves the Job format onto one it can read.
+function matchFormatToSelectedPrinter() {
+  const printer = networkPrinters.find((item) => item.id === $("sendPrinterSelect").value);
+  if (!printer) return;
+  const allowed = printerFormats(printer);
+  if (!allowed.includes($("format").value)) {
+    setOutputFormat(allowed[0], `${printerLabel(printer)} reads ${allowed.map((item) => item.toUpperCase()).join("/")}`);
+  }
+}
 let networkPrinters = [];
 const printerStatuses = new Map();
 let printerSendActive = false;
@@ -9531,6 +9603,7 @@ function initNetworkPrinters() {
   });
   $("sendToPrinterButton").addEventListener("click", sendActivePlateToPrinter);
   $("sendPrinterSelect").addEventListener("change", () => {
+    matchFormatToSelectedPrinter();
     try {
       localStorage.setItem(PRINTER_SELECTED_KEY, $("sendPrinterSelect").value);
     } catch {
@@ -9809,6 +9882,22 @@ async function sendActivePlateToPrinter() {
   if (!plate.sliced || !plate.slicedOutputPath) {
     logAndPrompt("Slice First", `Slice ${plate.name} before sending it. The printer receives the sliced ${$("format").value.toUpperCase()} file.`);
     return;
+  }
+  const allowed = printerFormats(printer);
+  const slicedFormat = fileFormatOf(plate.slicedOutputPath);
+  if (!allowed.includes(slicedFormat)) {
+    const target = allowed[0];
+    const reslice = await showThemedConfirm({
+      title: `${printerLabel(printer)} Needs ${target.toUpperCase()}`,
+      message: `${printerLabel(printer)} can't print ${slicedFormat.toUpperCase() || "this"} files. Re-slice ${plate.name} as ${target.toUpperCase()} and send that instead?`,
+      detail: `This printer reads ${allowed.map((item) => item.toUpperCase()).join(" or ")}. The Job format will switch to ${target.toUpperCase()}.`,
+      confirmText: `Re-slice as ${target.toUpperCase()}`,
+      kind: "warning"
+    });
+    if (!reslice) return;
+    setOutputFormat(target, `${printerLabel(printer)} reads ${target.toUpperCase()}`);
+    await slicePlates([plate], { forceSuffix: false, label: `Re-slicing as ${target.toUpperCase()}` });
+    if (!allowed.includes(fileFormatOf(plate.slicedOutputPath))) return; // slicing failed or was refused
   }
   const start = $("startAfterUpload").checked;
   if (start) {

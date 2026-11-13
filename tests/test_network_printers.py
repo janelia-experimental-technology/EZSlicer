@@ -145,6 +145,14 @@ class ChituPrinterTests(unittest.TestCase):
         self.assertEqual(self.board.files["existing.ctb"], b"")  # original untouched
         self.assertIn("M6030 ':existing-2.ctb'", self.board.commands)
 
+    def test_send_file_refuses_goo_on_chitu(self):
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "part.goo"
+            path.write_bytes(b"x")
+            with self.assertRaisesRegex(npr.PrinterError, "GOO.*CTB"):
+                npr.send_file({"ip": "127.0.0.1", "protocol": "chitu"}, path)
+        self.assertFalse(any(command.startswith("M28") for command in self.board.commands))
+
     def test_send_file_refuses_while_printing(self):
         self.board.printing = True
         with TemporaryDirectory() as tmp:

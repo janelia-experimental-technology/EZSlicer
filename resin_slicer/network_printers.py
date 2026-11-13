@@ -43,6 +43,9 @@ CHITU_CHUNK = 1280  # protocol doc recommends <= 256 * 5 bytes per packet
 SDCP_CHUNK = 1024 * 1024
 # ChiTu firmware truncates long network-written names; ChituBox keeps 25 chars of stem.
 CHITU_MAX_STEM = 25
+# File types each protocol's printers read. ChiTu boards (e.g. the original
+# Elegoo Jupiter) only accept (encrypted) CTB; SDCP printers read GOO and CTB.
+PROTOCOL_FORMATS = {"chitu": (".ctb",), "sdcp": (".goo", ".ctb")}
 
 Progress = Callable[[str, float], None]
 
@@ -671,6 +674,12 @@ def send_file(
         raise PrinterError(f"Sliced file not found: {path}")
     with connect(printer) as client:
         protocol = "chitu" if isinstance(client, ChituPrinter) else "sdcp"
+        allowed = PROTOCOL_FORMATS[protocol]
+        if path.suffix.lower() not in allowed:
+            raise PrinterError(
+                f"This printer can't print {path.suffix.upper().lstrip('.') or 'extensionless'} files; "
+                f"re-slice as {' or '.join(item.lstrip('.').upper() for item in allowed)}."
+            )
         status = client.status()
         if status.state in ("printing", "paused", "busy"):
             raise PrinterError(f"Printer is {status.detail.lower()}; wait for it to finish before uploading.")
