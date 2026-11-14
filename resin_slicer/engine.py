@@ -108,12 +108,20 @@ def _python_for(body: dict[str, Any]) -> str:
     return sys.executable
 
 
+# The children put the package folder on sys.path themselves instead of relying on the current
+# folder: an embeddable Python (with a ._pth file) imports only from the folders listed there.
+_CHILD_BOOT = (
+    "import runpy, sys; sys.path.insert(0, sys.argv.pop(1)); "
+    "runpy.run_module('resin_slicer.electron_bridge', run_name='__main__', alter_sys=True)"
+)
+
+
 def _bridge_messages(command: str, body: dict[str, Any], stop: threading.Event) -> Iterator[dict[str, Any] | None]:
     """Run one bridge command in its own Python and yield its messages (None = keep-alive)."""
     env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
     env.pop("JET_ENGINE_TOKEN", None)  # the job never needs the engine's secret
     child = subprocess.Popen(
-        [_python_for(body), "-m", "resin_slicer.electron_bridge", command],
+        [_python_for(body), "-c", _CHILD_BOOT, str(PACKAGE_DIR.parent), command],
         cwd=str(PACKAGE_DIR.parent),
         env=env,
         stdin=subprocess.PIPE,

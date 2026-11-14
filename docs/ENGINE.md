@@ -7,9 +7,15 @@ EZSlicer's own window. API version **1.0** (`resin_slicer/engine_info.py`).
 
 | How | Command |
 | --- | --- |
-| From the source or the engine package | `python -m resin_slicer.engine --engine` (run in the folder that holds `resin_slicer`) |
+| From the engine package (any Python 3.10+, embeddable too) | `python <package folder>/ezslicer_engine.py --engine` |
+| From the source | `python -m resin_slicer.engine --engine` (run in the folder that holds `resin_slicer`) |
 | From the portable app | `EZSlicer.exe --engine` |
 
+- **Embeddable Python:** python.org's embeddable build has a `._pth` file, so it imports only from
+  the folders listed there, never the current folder. `python -m resin_slicer.engine` then fails
+  with "No module named 'resin_slicer'"; use `ezslicer_engine.py`, which finds its own folder.
+  (Adding the package folder to the `._pth` file works too.) The engine's own child processes
+  find the package the same way, so they work either way.
 - Set `JET_ENGINE_TOKEN` to a secret first. The engine won't start without it.
 - It listens on `127.0.0.1` on a free port, then prints one JSON line on stdout:
   `{"engine": "ezslicer", "version": "0.2.0", "api": "1.0", "port": 51234}`.
@@ -71,7 +77,8 @@ bridge's messages, including the `type` field.
 
 ## JSON-lines bridge (unchanged, still supported)
 
-`python -m resin_slicer.electron_bridge <command>`, with the JSON request on stdin. It accepts
+`python -m resin_slicer.electron_bridge <command>` (or, from the engine package with any Python,
+`python <package folder>/ezslicer_engine.py bridge <command>`), with the JSON request on stdin. It accepts
 the same commands as the table above (`info`, `profiles`, `preview`, `slice`,
 `printer-discover`, `printer-status`, `printer-status-all`, `printer-send`, `printer-control`)
 and prints the same messages. These are the commands jET Hangar's `hangar_bridge.py` copy
@@ -99,7 +106,7 @@ the release:
 
 | Package | Contents |
 | --- | --- |
-| `EZSlicer-Engine-<version>.zip` + `.sha256` | `resin_slicer/` (with `BUILD.json`: version, commit, date, tag), `version.txt`, `ENGINE.md`, `LICENSE`. Runs on any Python 3.10+, with nothing to install. |
+| `EZSlicer-Engine-<version>.zip` + `.sha256` | `resin_slicer/` (with `BUILD.json`: version, commit, date, tag), `ezslicer_engine.py`, `version.txt`, `ENGINE.md`, `LICENSE`. Runs on any Python 3.10+, with nothing to install. |
 | `EZSlicer-Windows-Portable-<version>.zip` + `.sha256` | the app with its own Python. `version.txt` is next to `EZSlicer.exe`. |
 
 To build the engine package locally, run `python tools/package_engine.py`. It refuses

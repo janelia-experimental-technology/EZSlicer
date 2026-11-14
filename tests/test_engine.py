@@ -152,6 +152,31 @@ class EngineSendTests(unittest.TestCase):
         self.assertRegex(error["message"], "GOO.*CTB")
 
 
+class NoCurrentFolderTests(unittest.TestCase):
+    """An embeddable Python (._pth file) never imports from the current folder; python -I is the
+    same. The engine's children and the root launcher must work anyway."""
+
+    def run_isolated(self, args):
+        import subprocess
+        import sys
+
+        with TemporaryDirectory() as elsewhere:
+            return subprocess.run([sys.executable, "-I", *args], cwd=elsewhere, input=b"{}", capture_output=True, timeout=60)
+
+    def test_child_boot_finds_the_package(self):
+        done = self.run_isolated(["-c", engine._CHILD_BOOT, str(engine.PACKAGE_DIR.parent), "info"])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout.splitlines()[-1])["type"], "info")
+
+    def test_root_launcher(self):
+        launcher = str(engine.PACKAGE_DIR.parent / "ezslicer_engine.py")
+        done = self.run_isolated([launcher, "bridge", "info"])
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(json.loads(done.stdout.splitlines()[-1])["app"], "ezslicer")
+        done = self.run_isolated([launcher, "--version"])
+        self.assertEqual(json.loads(done.stdout)["app"], "ezslicer")
+
+
 class ParentWatchTests(unittest.TestCase):
     def test_this_process_is_alive_and_a_dead_pid_is_not(self):
         import os

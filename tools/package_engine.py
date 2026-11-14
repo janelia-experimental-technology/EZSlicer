@@ -6,6 +6,7 @@ The zip is plain Python (no packages to install) for any Python 3.10+, such as t
 build jET Hangar ships:
 
     resin_slicer/            the engine (BUILD.json inside records version, commit, date)
+    ezslicer_engine.py       starts it from any folder, with any Python (embeddable too)
     version.txt              first line = the bare version
     LICENSE
     ENGINE.md                how to run it
@@ -35,7 +36,11 @@ nothing to install. Run it from this folder (the one holding `resin_slicer`).
 ## HTTP engine (what jET Hangar uses)
 
     set JET_ENGINE_TOKEN=<a secret you make up>
-    python -m resin_slicer.engine --engine
+    python <this folder>/ezslicer_engine.py --engine
+
+`python -m resin_slicer.engine --engine` also works when run in this folder, except with
+python.org's embeddable Python: its ._pth file limits imports to the folders it lists, so use
+ezslicer_engine.py there (or add this folder to the ._pth file).
 
 It listens on 127.0.0.1 on a free port and prints one line, for example
 `{{"engine": "ezslicer", "version": "{version}", "api": "<major.minor>", "port": 51234}}`.
@@ -45,7 +50,7 @@ The engine exits when the process that started it exits.
 
 ## JSON-lines bridge
 
-    python -m resin_slicer.electron_bridge <command>   (JSON request on stdin)
+    python <this folder>/ezslicer_engine.py bridge <command>   (JSON request on stdin)
 
 Commands: info, profiles, preview, slice, printer-discover, printer-status, printer-status-all,
 printer-send, printer-control. Messages, one per line: progress, support, then the result
@@ -102,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         zf.writestr("version.txt", ver + "\n")
         zf.writestr("ENGINE.md", ENGINE_MD.format(version=ver))
         zf.write(ROOT / "LICENSE", "LICENSE")
+        zf.write(ROOT / "ezslicer_engine.py", "ezslicer_engine.py")
     checksum = sha256(zip_path)
     sha_path = zip_path.with_name(zip_path.name + ".sha256")
     sha_path.write_text(f"{checksum}  {zip_path.name}\n", encoding="ascii", newline="\n")
