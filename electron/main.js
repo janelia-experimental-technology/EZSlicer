@@ -4,6 +4,7 @@ const fsSync = require("fs");
 const fs = require("fs/promises");
 const { createReadStream } = require("fs");
 const path = require("path");
+const { EngineClient, startEngineHost } = require("./engine-client");
 
 const repoRoot = path.resolve(__dirname, "..");
 const appIconPath = path.join(repoRoot, "src", "assets", "app", "app-icon.ico");
@@ -18,11 +19,16 @@ const externalSplash = process.env.EZSLICER_EXTERNAL_SPLASH === "1";
 const SPLASH_LINGER_MS = 1800;
 let mainWindow = null;
 let splashWindow = null;
+// `EZSlicer.exe --engine`: the headless engine for jET Hangar. No window, no single-instance
+// lock (Hangar's engine runs next to an open EZSlicer window).
+const engineMode = process.argv.includes("--engine");
 
 app.setAppUserModelId("org.janelia.ezslicer");
 
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
-if (!gotSingleInstanceLock) {
+const gotSingleInstanceLock = engineMode ? false : app.requestSingleInstanceLock();
+if (engineMode) {
+  // handled in whenReady
+} else if (!gotSingleInstanceLock) {
   app.quit();
 } else {
   app.on("second-instance", () => {
@@ -151,6 +157,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (engineMode) {
+    startEngineHost({ app, python: pythonExecutable, stepPython: stepPythonExecutable, cwd: repoRoot });
+    return;
+  }
   if (!gotSingleInstanceLock) return;
   Menu.setApplicationMenu(null);
   if (!externalSplash) createSplashWindow();
@@ -180,8 +190,11 @@ process.on("unhandledRejection", (reason) => {
 });
 
 app.on("window-all-closed", () => {
+  if (engineMode) return;
   if (process.platform !== "darwin") app.quit();
 });
+
+app.on("will-quit", () => engineClient.stop());
 
 ipcMain.handle("dialog:open-stl", async () => {
   const result = await dialog.showOpenDialog({
@@ -363,19 +376,36 @@ ipcMain.handle("uvtools:read-printer", async (_event, printerPath) => {
   };
 });
 
-ipcMain.handle("bridge:profiles", async () => runBridge("profiles", {}));
+// The window's work goes through EZSlicer's own engine (resin_slicer.engine), the API jET Hangar
+// uses too; if the engine can't start, the one-shot JSON-lines bridge does the same work.
+const engineClient = new EngineClient({ python: pythonExecutable, stepPython: stepPythonExecutable, cwd: repoRoot });
+
+async function runEngine(command, payload, onMessage) {
+  if (process.env.EZSLICER_NO_ENGINE !== "1" && engineClient.available()) {
+    let engine = null;
+    try {
+      engine = await engineClient.start();
+    } catch (error) {
+      console.warn(`EZSlicer engine unavailable, using the bridge: ${error.message}`);
+    }
+    if (engine) return engineClient.run(command, payload, onMessage);
+  }
+  return runBridge(command, payload, onMessage);
+}
+
+ipcMain.handle("bridge:profiles", async () => runEngine("profiles", {}));
 ipcMain.handle("bridge:preview", async (event, payload) => {
-  return runBridge("preview", payload, (message) => event.sender.send("preview:progress", message));
+  return runEngine("preview", payload, (message) => event.sender.send("preview:progress", message));
 });
 ipcMain.handle("bridge:slice", async (event, payload) => {
-  return runBridge("slice", payload, (message) => event.sender.send("slice:progress", message));
+  return runEngine("slice", payload, (message) => event.sender.send("slice:progress", message));
 });
 // Network printers (ChiTu UDP / Elegoo SDCP); see resin_slicer/network_printers.py.
-ipcMain.handle("printer:discover", async (_event, payload) => runBridge("printer-discover", payload));
-ipcMain.handle("printer:status", async (_event, printer) => runBridge("printer-status", { printer }));
-ipcMain.handle("printer:control", async (_event, printer, action) => runBridge("printer-control", { printer, action }));
+ipcMain.handle("printer:discover", async (_event, payload) => runEngine("printer-discover", payload));
+ipcMain.handle("printer:status", async (_event, printer) => runEngine("printer-status", { printer }));
+ipcMain.handle("printer:control", async (_event, printer, action) => runEngine("printer-control", { printer, action }));
 ipcMain.handle("printer:send", async (event, payload) => {
-  return runBridge("printer-send", payload, (message) => event.sender.send("printer:progress", message));
+  return runEngine("printer-send", payload, (message) => event.sender.send("printer:progress", message));
 });
 
 let cachedPython = null;
@@ -388,6 +418,7 @@ function probePython(command, args) {
     const script = "import sys;print('%d.%d|%s' % (sys.version_info[0], sys.version_info[1], sys.executable))";
     const out = execFileSync(command, [...args, "-c", script], {
       encoding: "utf8",
+      windowsHide: true,
       stdio: ["ignore", "pipe", "ignore"]
     }).trim();
     const [version, executable] = out.split("|");
@@ -550,7 +581,7 @@ function runBridge(command, payload, onMessage) {
     const child = spawn(
       payloadHasStepMesh(payload) ? stepPythonExecutable() : pythonExecutable(),
       ["-m", "resin_slicer.electron_bridge", command],
-      { cwd: repoRoot, stdio: ["pipe", "pipe", "pipe"] }
+      { cwd: repoRoot, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
     );
 
     let stderr = "";
@@ -603,7 +634,7 @@ function convertStepToStl(filePath) {
     const child = spawn(
       stepPythonExecutable(),
       ["-m", "resin_slicer.step", String(filePath || "")],
-      { cwd: repoRoot, stdio: ["ignore", "pipe", "pipe"] }
+      { cwd: repoRoot, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }
     );
     let stdout = "";
     let stderr = "";

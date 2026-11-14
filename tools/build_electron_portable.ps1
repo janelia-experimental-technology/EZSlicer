@@ -75,6 +75,10 @@ if (Test-Path $resinExe) {
 }
 Rename-Item -LiteralPath $electronExe -NewName "EZSlicer.exe"
 
+# version.txt next to the exe (first line = the bare version) so jET Hangar can see what's installed.
+$version = (Get-Content -Raw -LiteralPath (Join-Path $root "package.json") | ConvertFrom-Json).version
+[System.IO.File]::WriteAllText((Join-Path $nextDist "version.txt"), "$version`n")
+
 $oldDist = Join-Path $distRoot ("EZSlicer.old-" + (Get-Date -Format "yyyyMMddHHmmss"))
 if (Test-Path $appDist) {
     try {

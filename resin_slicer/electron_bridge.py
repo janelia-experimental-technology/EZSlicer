@@ -17,6 +17,7 @@ from .config import PROFILES, PrintConfig, SupportConfig, profile
 from .errors import ConfigError, SlicerError
 from .mesh import Mesh, load_mesh
 from . import network_printers
+from .engine_info import version_json
 from .pipeline import SliceJob, slice_to_file
 from .raster import LayerRaster, dilate_mask, mm_to_px
 from .slicing import prepare_mesh
@@ -35,15 +36,32 @@ from .supports import (
 from .transform import MeshTransform, apply_transform
 
 
+# The JSON-lines commands. EZSlicer's window and jET Hangar both use them, so keep each one and
+# its messages working; the HTTP engine (resin_slicer.engine) serves the same features.
+COMMANDS = (
+    "info",
+    "profiles",
+    "preview",
+    "slice",
+    "printer-discover",
+    "printer-status",
+    "printer-status-all",
+    "printer-send",
+    "printer-control",
+)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="JSON bridge for the Electron UI")
     parser.add_argument(
         "command",
-        choices=["profiles", "preview", "slice", "printer-discover", "printer-status", "printer-send", "printer-control"],
+        choices=list(COMMANDS),
     )
     args = parser.parse_args(argv)
     try:
-        if args.command == "profiles":
+        if args.command == "info":
+            _write_json({"type": "info", "engine": "EZSlicer", **version_json()})
+        elif args.command == "profiles":
             _write_json({"type": "profiles", "profiles": {name: asdict(cfg) for name, cfg in PROFILES.items()}})
         elif args.command == "preview":
             _preview(_read_json())
@@ -60,8 +78,15 @@ def main(argv: list[str] | None = None) -> int:
 def _printer_command(command: str, request: dict[str, Any]) -> None:
     if command == "printer-discover":
         targets = [str(ip).strip() for ip in request.get("targets") or [] if str(ip).strip()]
-        printers = network_printers.discover(targets, timeout=float(request.get("timeout") or 2.5))
+        printers = network_printers.discover(
+            targets,
+            timeout=float(request.get("timeout") or 2.5),
+            broadcast=bool(request.get("broadcast", True)),
+        )
         _write_json({"type": "printers", "printers": [printer.to_json() for printer in printers]})
+        return
+    if command == "printer-status-all":
+        _write_json({"type": "printer-statuses", "statuses": printer_statuses(request.get("printers") or [])})
         return
     printer = request.get("printer") or {}
     if command == "printer-status":
@@ -82,6 +107,25 @@ def _printer_command(command: str, request: dict[str, Any]) -> None:
         with network_printers.connect(printer) as client:
             getattr(client, action)()
             _write_json({"type": "printer-status", "status": client.status().to_json()})
+
+
+def printer_statuses(printers: list[Any]) -> list[dict[str, Any]]:
+    """Every printer's state at once. A printer that's off or unreachable is an answer
+    ({"ok": false, "error": ...}), not a failure of the whole request."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(printer: dict[str, Any]) -> dict[str, Any]:
+        try:
+            with network_printers.connect(printer) as client:
+                return {"id": printer.get("id"), "ok": True, **client.status().to_json()}
+        except Exception as exc:  # noqa: BLE001 - reported per printer
+            return {"id": printer.get("id"), "ok": False, "error": str(exc)}
+
+    targets = [printer for printer in printers if isinstance(printer, dict)]
+    if not targets:
+        return []
+    with ThreadPoolExecutor(max_workers=min(16, len(targets))) as pool:
+        return list(pool.map(one, targets))
 
 
 def _read_json() -> dict[str, Any]:
@@ -196,8 +240,14 @@ def _slice(request: dict[str, Any]) -> None:
         )
     config = _config_from_request(request)
     support_config = _support_from_request(request)
-    preview_scale = 1
-    preview_dir = tempfile.mkdtemp(prefix="rspreview_")
+    # The caller may choose where the layer images go and how much smaller than the screen
+    # they are (jET Hangar does); by default they're full size in a new temp folder.
+    preview_dir = str(request.get("previewDir") or "")
+    if preview_dir:
+        os.makedirs(preview_dir, exist_ok=True)
+    else:
+        preview_dir = tempfile.mkdtemp(prefix="rspreview_")
+    preview_scale = max(1, int(request.get("previewScale") or 1))
     # A plan shipped from the viewport slices verbatim (what you see is what
     # you print); without one, fall back to the cached previewed plan or a
     # fresh analysis.

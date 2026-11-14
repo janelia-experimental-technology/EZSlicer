@@ -8,8 +8,8 @@ The project favors stability and explicit settings over silent guessing. Always 
 
 For someone who just wants to run the app:
 
-1. Extract `EZSlicer-Windows-Portable.zip`.
-2. Run `Run EZSlicer.bat`, or open `EZSlicer\EZSlicer.exe`.
+1. Extract `EZSlicer-Windows-Portable-<version>.zip` (check it against its `.sha256`).
+2. Run `Run EZSlicer.vbs`, or open `EZSlicer\EZSlicer.exe`.
 3. Keep the `EZSlicer` folder together. Do not move only the `.exe` out of the folder.
 
 The packaged build includes Electron and a minimal Python runtime, so users should not need Node.js, npm, or a separate Python install.
@@ -23,7 +23,8 @@ powershell -ExecutionPolicy Bypass -File .\tools\package_release.ps1
 Outputs:
 
 - `dist\EZSlicer-Windows-Portable\`
-- `dist\EZSlicer-Windows-Portable.zip`
+- `dist\EZSlicer-Windows-Portable-<version>.zip` and its `.sha256`
+- `version.txt` next to `EZSlicer.exe` (first line = the version)
 
 ## Versioning
 
@@ -38,6 +39,19 @@ npm run release -- minor --push      # also push the commit and tag
 ```
 
 It refuses to run with uncommitted changes, runs the tests and build, bumps every version field, commits `Release vX.Y.Z`, and creates an annotated tag listing the commits since the previous tag. The app shows its version next to the title in the sidebar, and `python -m resin_slicer.cli --version` prints it.
+
+Pushing a tag builds the release in GitHub Actions (`.github/workflows/release.yml`) from the tag itself: the portable app zip and the engine zip, each with a `.sha256`, attached to a GitHub release.
+
+## Headless Engine
+
+EZSlicer's slicing and printer connections also run without the window, as an HTTP/JSON API on `127.0.0.1` for jET Hangar. The window uses the same engine for its own work, so each printer connection has one owner.
+
+```powershell
+$env:JET_ENGINE_TOKEN = "<secret>"
+python -m resin_slicer.engine --engine   # or: EZSlicer.exe --engine
+```
+
+It prints `{"engine": "ezslicer", "version": ..., "api": "1.0", "port": ...}` and serves `/api/health`, `/api/version`, `/api/capabilities`, `/api/openapi.json` and the `/api/v1/...` routes. Contract tests: `python -m pytest tests/contract`. See [docs/ENGINE.md](docs/ENGINE.md) for the routes, streaming, errors and release packages.
 
 ## GUI Workflow
 
