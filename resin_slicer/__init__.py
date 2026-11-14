@@ -1,6 +1,6 @@
 """Dependency-light MSLA resin slicer."""
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 
 from .config import PrintConfig, SupportConfig
 from .pipeline import SliceJob, slice_to_file
