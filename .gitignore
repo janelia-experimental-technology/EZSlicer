@@ -12,3 +12,6 @@ dist/
 # Machine-local launchers from install-windows-launcher.ps1 (absolute paths)
 *.lnk
 launchers/*-shortcut-icon-*.ico
+
+# Written into packages at build time
+resin_slicer/BUILD.json

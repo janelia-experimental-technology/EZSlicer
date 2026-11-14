@@ -28,7 +28,6 @@ if (Test-Path $nextDist) {
     Remove-Item -LiteralPath $nextDist -Recurse -Force
 }
 New-Item -ItemType Directory -Force -Path $nextDist | Out-Null
-New-Item -ItemType Directory -Force -Path $resourcesApp | Out-Null
 
 Write-Host "Building renderer..."
 Push-Location $root
@@ -42,12 +41,16 @@ try {
 }
 
 Write-Host "Copying Electron runtime..."
-Copy-Item -Path (Join-Path $runtimeDir "*") -Destination $nextDist -Recurse -Force
+# Copy into an empty folder, one top-level item at a time: PowerShell 7's wildcard copy fails
+# ("Container cannot be copied onto existing leaf item") when a target folder already exists.
+Get-ChildItem -LiteralPath $runtimeDir -Force | ForEach-Object {
+    Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $nextDist $_.Name) -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path $resourcesApp | Out-Null
 
 Write-Host "Copying app files..."
 $items = @(
     "assets",
-    "dist",
     "electron",
     "resin_slicer",
     "src",
@@ -62,6 +65,13 @@ foreach ($item in $items) {
         Copy-Item -Path $src -Destination $resourcesApp -Recurse -Force
     }
 }
+
+# Only the built renderer from dist\: the app folders being built live in dist\ too, so copying
+# all of it would copy the build into itself.
+$rendererDist = Join-Path $resourcesApp "dist"
+New-Item -ItemType Directory -Force -Path $rendererDist | Out-Null
+Copy-Item -LiteralPath (Join-Path $distRoot "index.html") -Destination $rendererDist -Force
+Copy-Item -LiteralPath (Join-Path $distRoot "assets") -Destination (Join-Path $rendererDist "assets") -Recurse -Force
 
 Get-ChildItem -Path $resourcesApp -Recurse -Directory -Filter "__pycache__" |
     Remove-Item -Recurse -Force
@@ -78,6 +88,15 @@ Rename-Item -LiteralPath $electronExe -NewName "EZSlicer.exe"
 # version.txt next to the exe (first line = the bare version) so jET Hangar can see what's installed.
 $version = (Get-Content -Raw -LiteralPath (Join-Path $root "package.json") | ConvertFrom-Json).version
 [System.IO.File]::WriteAllText((Join-Path $nextDist "version.txt"), "$version`n")
+# BUILD.json lets the engine report its commit without git (GET /api/version).
+$build = [ordered]@{
+    app = "ezslicer"
+    version = $version
+    commit = (& git -C $root rev-parse HEAD).Trim()
+    date = (& git -C $root log -1 --format=%cI).Trim()
+    tag = "$(& git -C $root tag --points-at HEAD --list 'v[0-9]*')".Trim()
+}
+[System.IO.File]::WriteAllText((Join-Path $resourcesApp "resin_slicer/BUILD.json"), ($build | ConvertTo-Json) + "`n")
 
 $oldDist = Join-Path $distRoot ("EZSlicer.old-" + (Get-Date -Format "yyyyMMddHHmmss"))
 if (Test-Path $appDist) {

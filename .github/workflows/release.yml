@@ -40,7 +40,7 @@ jobs:
       - name: Engine package
         run: python tools/package_engine.py
       - name: App package
-        shell: pwsh
+        shell: powershell  # Windows PowerShell 5.1, as on the team's PCs
         run: ./tools/package_release.ps1
       - name: Publish the release
         shell: pwsh
