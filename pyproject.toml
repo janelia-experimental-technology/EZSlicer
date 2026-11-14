@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "resin-slicer"
-version = "0.3.0"
+version = "0.3.1"
 description = "A dependency-light MSLA resin slicer with native GOO and CTB export."
 requires-python = ">=3.10"
 readme = "README.md"
