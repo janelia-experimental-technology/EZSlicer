@@ -161,7 +161,9 @@ def probe(ip: str, timeout: float = 2.0) -> PrinterInfo:
 
 def remote_filename(local_name: str, protocol: str) -> str:
     """Printer-safe file name: ASCII, no path characters, ChiTu stem <= 25."""
-    base = os.path.basename(local_name.replace("\\", "/"))
+    # Split by hand: os.path.basename changes across Python versions on odd paths ("///.ctb" is a
+    # UNC root on 3.12). Drop any drive ("C:") too; ":" can't be in a file name.
+    base = local_name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1].rsplit(":", 1)[-1]
     # splitext(".ctb") treats the whole name as a stem; keep it as the extension.
     stem, ext = ("", base) if base.startswith(".") and base.count(".") == 1 else os.path.splitext(base)
     stem = re.sub(r"[^A-Za-z0-9 _.\-()]+", "_", stem).strip(" ._") or "print"
