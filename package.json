@@ -1,7 +1,7 @@
 {
   "name": "ezslicer",
   "productName": "EZSlicer",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Electron front end for the Python resin slicer backend.",
   "repository": {
