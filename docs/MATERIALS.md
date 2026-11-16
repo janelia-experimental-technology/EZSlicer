@@ -83,6 +83,27 @@ loaded resin:
 ChiTu-board printers (e.g. the Jupiter) don't report which file is printing, so they get the
 send-time check only.
 
+### Deployment (jetliquid-ww1)
+
+```powershell
+powershell -File deploy\material-service\deploy.ps1   # from Windows PowerShell in the repo
+```
+
+This copies only the four modules the service needs (`errors`, `material_tags`,
+`network_printers`, `material_service`) to `C:\ProgramData\EZSlicerMaterials\app`, then runs
+`install.ps1` on the host. That script:
+
+- creates `token.txt` the first time (readable by SYSTEM and Administrators only);
+- opens TCP 8070 (firewall rule "EZSlicer Material Service 8070");
+- registers the scheduled task "EZSlicer Material Service" (SYSTEM, at startup) and restarts it.
+
+The task runs the `run-material-service.ps1` supervisor, which restarts the service whenever it
+exits. Logs go to `logs\service-YYYYMMDD.log` and data to `data\printer-materials.json`. To add a
+webhook, put its URL in `webhook.txt` and rerun the deploy.
+
+Address: `http://jetliquid-ww1:8070`. To read the token:
+`ssh jetliquid-ww1 type C:\ProgramData\EZSlicerMaterials\token.txt`.
+
 ## Engine (jET Hangar)
 
 - `POST /api/v1/files/material` `{path}` returns `{material}`.
