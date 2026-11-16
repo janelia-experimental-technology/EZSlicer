@@ -53,6 +53,10 @@ python -m resin_slicer.engine --engine   # or: EZSlicer.exe --engine
 
 It prints `{"engine": "ezslicer", "version": ..., "api": "1.0", "port": ...}` and serves `/api/health`, `/api/version`, `/api/capabilities`, `/api/openapi.json` and the `/api/v1/...` routes. Contract tests: `python -m pytest tests/contract`. See [docs/ENGINE.md](docs/ENGINE.md) for the routes, streaming, errors and release packages.
 
+## Loaded Resin Check
+
+Set each printer's loaded resin under **Printers**. Sending a file sliced for another resin asks first. Point EZSlicer at a shared material service (`python -m resin_slicer.material_service`) to share the loaded resin across PCs and have it watch the Elegoo SDCP printers (Mars 5 Ultra, Saturn 4 Ultra), flagging or pausing a print that starts with the wrong resin, from USB too. See [docs/MATERIALS.md](docs/MATERIALS.md).
+
 ## GUI Workflow
 
 1. Open one or more STL/OBJ/STP/STEP files, or drag mesh files into the 3D view.

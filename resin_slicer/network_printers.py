@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .errors import SlicerError
+from .material_tags import materials_match, read_file_material
 
 DISCOVERY_PORT = 3000
 CHITU_PORT = 3000
@@ -52,6 +53,18 @@ Progress = Callable[[str, float], None]
 
 class PrinterError(SlicerError):
     """A network printer refused a request or could not be reached."""
+
+
+class MaterialMismatchError(PrinterError):
+    """The file was sliced for a different resin than the one loaded in the printer."""
+
+    def __init__(self, file_material: str, loaded_material: str) -> None:
+        super().__init__(
+            f"This file was sliced for {file_material}, but {loaded_material} is loaded in the printer. "
+            "Re-slice with the loaded resin's profile, or change the printer's loaded material."
+        )
+        self.file_material = file_material
+        self.loaded_material = loaded_material
 
 
 @dataclass
@@ -669,11 +682,19 @@ def send_file(
     *,
     start: bool = False,
     progress: Progress | None = None,
+    loaded_material: str | None = None,
+    allow_material_mismatch: bool = False,
 ) -> dict[str, Any]:
-    """Upload a sliced file (refusing if the printer is mid-print) and optionally start it."""
+    """Upload a sliced file (refusing if the printer is mid-print) and optionally start it.
+
+    With ``loaded_material`` (the resin in the printer), a file sliced for another resin is
+    refused with MaterialMismatchError unless ``allow_material_mismatch``."""
     path = Path(path)
     if not path.is_file():
         raise PrinterError(f"Sliced file not found: {path}")
+    file_material = read_file_material(path) or ""
+    if loaded_material and not allow_material_mismatch and materials_match(loaded_material, file_material) is False:
+        raise MaterialMismatchError(file_material, loaded_material)
     with connect(printer) as client:
         protocol = "chitu" if isinstance(client, ChituPrinter) else "sdcp"
         allowed = PROTOCOL_FORMATS[protocol]
@@ -695,4 +716,4 @@ def send_file(
                 progress(f"Starting {name}", 1.0)
             client.start_print(name)
             started = True
-        return {"remoteName": name, "started": started, "bytes": path.stat().st_size}
+        return {"remoteName": name, "started": started, "bytes": path.stat().st_size, "material": file_material}

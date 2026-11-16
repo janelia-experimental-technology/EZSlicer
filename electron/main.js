@@ -407,6 +407,45 @@ ipcMain.handle("printer:control", async (_event, printer, action) => runEngine("
 ipcMain.handle("printer:send", async (event, payload) => {
   return runEngine("printer-send", payload, (message) => event.sender.send("printer:progress", message));
 });
+ipcMain.handle("printer:file-material", async (_event, filePath) => runEngine("file-material", { path: filePath }));
+
+// The shared printer material service (resin_slicer/material_service.py). Requests go from
+// here, not the page, so the service needn't allow the app's origin and the token stays out
+// of the renderer's network log.
+ipcMain.handle("materials:request", async (_event, { baseUrl, token, method = "GET", path, body } = {}) => {
+  let url;
+  try {
+    url = new URL(String(path || ""), String(baseUrl || ""));
+  } catch {
+    throw new Error("The material service address isn't a valid URL.");
+  }
+  if (!/^https?:$/.test(url.protocol) || !url.pathname.startsWith("/api/")) {
+    throw new Error("The material service address must be an http(s) URL.");
+  }
+  const headers = { Accept: "application/json" };
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (token) headers.Authorization = `Bearer ${token}`;
+  let response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(8000)
+    });
+  } catch (error) {
+    throw new Error(`Material service at ${url.origin} didn't answer (${error.cause?.code || error.message}).`);
+  }
+  const text = await response.text();
+  let data = {};
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch {
+    data = { error: text.slice(0, 200) };
+  }
+  if (!response.ok) throw new Error(data.error || `Material service answered ${response.status}`);
+  return data;
+});
 
 let cachedPython = null;
 

@@ -343,6 +343,49 @@ body {
   gap: 8px;
 }
 
+.printer-row-material {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  color: #aab5bf;
+}
+
+.printer-row-material input,
+.printer-row-material select {
+  min-width: 0;
+  padding: 3px 6px;
+  font-size: 12px;
+}
+
+.printer-row-material button {
+  width: auto;
+  padding: 4px 10px;
+  font-size: 12px;
+}
+
+.printer-row-material select {
+  grid-column: 2 / -1;
+}
+
+.printer-row-material-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #8b98a5;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.printer-row-material-note.mismatch {
+  color: #ffb454;
+}
+
+#materialServiceStatus.error {
+  color: #ffb4b4;
+}
+
 .send-printer {
   display: grid;
   gap: 6px;

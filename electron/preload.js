@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld("slicer", {
   printerStatus: (printer) => ipcRenderer.invoke("printer:status", printer),
   printerControl: (printer, action) => ipcRenderer.invoke("printer:control", printer, action),
   sendToPrinter: (payload) => ipcRenderer.invoke("printer:send", payload),
+  fileMaterial: (filePath) => ipcRenderer.invoke("printer:file-material", filePath),
+  materialService: (request) => ipcRenderer.invoke("materials:request", request),
   onPrinterProgress: (callback) => {
     const listener = (_event, message) => callback(message);
     ipcRenderer.on("printer:progress", listener);
