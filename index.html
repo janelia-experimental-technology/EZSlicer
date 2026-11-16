@@ -159,6 +159,15 @@
                 <button id="addPrinterButton" type="button">Add Printer</button>
                 <p class="printer-hint">Elegoo/ChiTu printers on the network: older boards (Jupiter, Saturn, Mars 2/3) and SDCP models (Mars 5 Ultra, Saturn 4 Ultra). The type is detected when you add one.</p>
               </section>
+              <section class="settings-menu-section">
+                <h2>Loaded resin</h2>
+                <div class="grid two">
+                  <label>Material service <input id="materialServiceUrl" type="text" placeholder="Blank = this PC only"></label>
+                  <label>Token <input id="materialServiceToken" type="password" placeholder="If the service needs one"></label>
+                </div>
+                <button id="saveMaterialServiceButton" type="button">Connect</button>
+                <p id="materialServiceStatus" class="printer-hint">Set each printer's loaded resin above. Without a material service it is kept on this PC only and nothing watches the printers.</p>
+              </section>
             </section>
           </div>
         </nav>

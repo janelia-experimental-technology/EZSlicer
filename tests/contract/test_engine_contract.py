@@ -43,6 +43,8 @@ REQUIRED_FEATURES = {
     "printers.status-all",
     "printers.send",
     "printers.control",
+    "printers.material-check",
+    "files.material",
 }
 REQUIRED_PATHS = {
     "/api/health": "get",
@@ -58,6 +60,7 @@ REQUIRED_PATHS = {
     "/api/v1/printers/status-all": "post",
     "/api/v1/printers/control": "post",
     "/api/v1/printers/send": "post",
+    "/api/v1/files/material": "post",
 }
 NOBODY = {"id": "contract-test", "ip": "127.0.0.1", "protocol": "chitu"}  # nothing answers here
 
@@ -346,6 +349,36 @@ class EngineContract(unittest.TestCase):
         status, body = self.engine.json("POST", "/api/v1/printers/send", {"printer": NOBODY, "path": str(self.dir / "missing.ctb")})
         self.assertEqual(status, 400)
         self.assertErrorShape(body, "invalid_request")
+
+    def _sliced_for(self, resin: str) -> Path:
+        from resin_slicer.config import SupportConfig, profile
+        from resin_slicer.mesh import cube_mesh
+        from resin_slicer.pipeline import SliceJob, slice_to_file
+
+        path = self.dir / f"{resin.replace(' ', '_')}.goo"
+        config = profile("small-test").with_overrides(layer_height_mm=2.0, resin_name=resin)
+        slice_to_file(SliceJob(cube_mesh(6), config, SupportConfig(enabled=False)), path, "goo")
+        return path
+
+    def test_file_material(self) -> None:
+        path = self._sliced_for("Siraya Fast Grey")
+        status, body = self.engine.json("POST", "/api/v1/files/material", {"path": str(path)})
+        self.assertEqual((status, body["type"], body["material"]), (200, "file-material", "Siraya Fast Grey"))
+        status, body = self.engine.json("POST", "/api/v1/files/material", {"path": str(self.dir / "missing.goo")})
+        self.assertEqual(status, 400)
+        self.assertErrorShape(body, "invalid_request")
+
+    def test_send_refuses_other_resin_before_touching_the_printer(self) -> None:
+        path = self._sliced_for("Siraya Fast Grey")
+        request = {"printer": NOBODY, "path": str(path), "loadedMaterial": "Elegoo ABS-like Clear"}
+        status, body = self.engine.json("POST", "/api/v1/printers/send", request)
+        self.assertEqual(status, 409)
+        self.assertErrorShape(body, "material_mismatch")
+        self.assertEqual(body["error"]["details"], {"fileMaterial": "Siraya Fast Grey", "loadedMaterial": "Elegoo ABS-like Clear"})
+        # a matching resin (or an override) gets past the check to the (unreachable) printer
+        for extra in ({"loadedMaterial": "siraya fast grey"}, {"allowMaterialMismatch": True}):
+            status, body = self.engine.json("POST", "/api/v1/printers/send", {**request, **extra})
+            self.assertNotEqual(status, 409, body)
 
 
 if __name__ == "__main__":

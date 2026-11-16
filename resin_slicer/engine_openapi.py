@@ -154,9 +154,19 @@ def openapi_document() -> dict[str, Any]:
             "/api/v1/printers/send": {"post": _op(
                 "Upload a sliced file, optionally start it",
                 _ok({"type": "object", "properties": {"type": {"const": "printer-sent"}, "remoteName": {"type": "string"}, "started": {"type": "boolean"}}, "additionalProperties": True}, stream=True),
-                body=_json_body({"type": "object", "required": ["printer", "path"], "properties": {"printer": printer, "path": {"type": "string"}, "start": {"type": "boolean", "default": False}}}),
+                body=_json_body({"type": "object", "required": ["printer", "path"], "properties": {
+                    "printer": printer, "path": {"type": "string"}, "start": {"type": "boolean", "default": False},
+                    "loadedMaterial": {"type": "string", "description": "The resin in the printer. A file sliced for another resin is refused with 409 material_mismatch."},
+                    "allowMaterialMismatch": {"type": "boolean", "default": False, "description": "Send even when the file's resin doesn't match loadedMaterial."},
+                }}),
                 stream=True,
-                description="Refuses a file in the wrong format for the printer, and refuses while it is printing. Streams `progress` messages with `fraction`.",
+                description="Refuses a file in the wrong format for the printer, a file sliced for another resin than `loadedMaterial` (409 `material_mismatch`, details `fileMaterial`/`loadedMaterial`), and refuses while it is printing. Streams `progress` messages with `fraction`. The result's `material` is the resin the file was sliced for.",
+            )},
+            "/api/v1/files/material": {"post": _op(
+                "Which resin a sliced file was made for",
+                _ok({"type": "object", "properties": {"type": {"const": "file-material"}, "path": {"type": "string"}, "material": {"type": ["string", "null"]}}}),
+                body=_json_body({"type": "object", "required": ["path"], "properties": {"path": {"type": "string", "description": "A .ctb or .goo file on this PC"}}}),
+                description="Reads the resin profile name stored in a CTB/GOO file; null when the file doesn't say.",
             )},
         },
         "components": {

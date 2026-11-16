@@ -9600,7 +9600,10 @@ function initNetworkPrinters() {
   $("printersButton").addEventListener("click", () => {
     // The shared topbar handler may run after this one; check once it has toggled.
     setTimeout(() => {
-      if (!$("printersTopbarMenu").hidden) refreshPrinterStatuses();
+      if (!$("printersTopbarMenu").hidden) {
+        refreshPrinterStatuses();
+        refreshServiceMaterials({ quiet: true });
+      }
     }, 0);
   });
   $("sendToPrinterButton").addEventListener("click", sendActivePlateToPrinter);
@@ -9613,6 +9616,7 @@ function initNetworkPrinters() {
     }
   });
   window.slicer.onPrinterProgress((message) => showSendProgress(message.message, message.fraction));
+  initMaterialService();
   renderPrinters();
 }
 
@@ -9665,6 +9669,8 @@ function printerRow(printer) {
   statusLine.className = `printer-row-status ${status ? (status.error ? "error" : status.state) : ""}`;
   statusLine.textContent = status ? (status.error || status.detail || status.state) : "Status not checked";
   row.append(statusLine);
+
+  row.append(printerMaterialControls(printer));
 
   if (status && (status.state === "printing" || status.state === "paused")) {
     const actions = document.createElement("div");
@@ -9901,12 +9907,40 @@ async function sendActivePlateToPrinter() {
     await slicePlates([plate], { forceSuffix: false, label: `Re-slicing as ${target.toUpperCase()}` });
     if (!allowed.includes(fileFormatOf(plate.slicedOutputPath))) return; // slicing failed or was refused
   }
+  const loadedMaterial = loadedMaterialOf(printer);
+  let fileMaterial = "";
+  try {
+    fileMaterial = (await window.slicer.fileMaterial(plate.slicedOutputPath)).material || "";
+  } catch (error) {
+    log(`Could not read the resin from ${fileName(plate.slicedOutputPath)}: ${error.message}`);
+  }
+  let allowMaterialMismatch = false;
+  if (sameMaterial(loadedMaterial, fileMaterial) === false) {
+    const sendAnyway = await showThemedConfirm({
+      title: "Different Resin Loaded",
+      message: `${plate.name} was sliced for ${fileMaterial}, but ${printerLabel(printer)} has ${loadedMaterial} loaded.`,
+      detail: "Exposure and lift settings are tuned per resin, so the wrong profile can fail the print or tear the FEP. Re-slice with the loaded resin's profile, or update the printer's loaded resin under Printers if it has changed.",
+      confirmText: "Send Anyway",
+      kind: "warning"
+    });
+    if (!sendAnyway) {
+      log(`Send cancelled: ${plate.name} is sliced for ${fileMaterial}, ${printerLabel(printer)} has ${loadedMaterial}.`);
+      return;
+    }
+    allowMaterialMismatch = true;
+    log(`Sending ${plate.name} (${fileMaterial}) to ${printerLabel(printer)} with ${loadedMaterial} loaded, as confirmed.`, "warning");
+  } else if (!loadedMaterial) {
+    log(`${printerLabel(printer)} has no loaded resin set, so the resin wasn't checked. Set it under Printers.`);
+  }
   const start = $("startAfterUpload").checked;
   if (start) {
+    const resinLine = loadedMaterial
+      ? `Sliced for ${fileMaterial || "an unknown resin"}; ${printerLabel(printer)} has ${loadedMaterial} loaded. `
+      : "";
     const ok = await showThemedConfirm({
       title: "Upload and Start Printing",
       message: `Upload ${fileName(plate.slicedOutputPath)} to ${printerLabel(printer)} and start printing right away?`,
-      detail: "Check the vat has enough resin, the build plate is clean and locked, and the file was sliced with this printer's machine profile.",
+      detail: `${resinLine}Check the vat has enough resin, the build plate is clean and locked, and the file was sliced with this printer's machine profile.`,
       confirmText: "Upload and Print",
       kind: "warning"
     });
@@ -9917,7 +9951,14 @@ async function sendActivePlateToPrinter() {
   showSendProgress(`Connecting to ${printerLabel(printer)}...`, 0);
   playSound("click-crisp");
   try {
-    const result = await window.slicer.sendToPrinter({ printer: bridgePrinter(printer), path: plate.slicedOutputPath, start });
+    const result = await window.slicer.sendToPrinter({
+      printer: bridgePrinter(printer),
+      path: plate.slicedOutputPath,
+      start,
+      loadedMaterial,
+      allowMaterialMismatch
+    });
+    recordSentJob(printer, result.remoteName, result.material || fileMaterial);
     showSendProgress(`${result.started ? "Printing" : "Uploaded"} ${result.remoteName} on ${printerLabel(printer)}`, 1);
     log(`${result.started ? "Started" : "Uploaded"} ${result.remoteName} on ${printerLabel(printer)}.`);
     playSound("success");
@@ -9930,6 +9971,277 @@ async function sendActivePlateToPrinter() {
     printerSendActive = false;
     updateSendPrinterControls();
   }
+}
+
+// ---------------------------------------------------------------------------
+// Loaded resin per printer. Printers can't be told what resin is in the vat, so
+// EZSlicer keeps it: on this PC only, or in the shared material service
+// (resin_slicer/material_service.py), which also watches SDCP printers and
+// pauses/flags prints sliced for another resin, wherever they were started.
+// ---------------------------------------------------------------------------
+
+const MATERIAL_SERVICE_KEY = "resinSlicer.materialService";
+const MATERIAL_POLL_MS = 15000;
+const MATERIAL_POLICIES = [
+  ["warn", "Warn on mismatch"],
+  ["pause", "Pause on mismatch"],
+  ["strict", "Pause on mismatch or unknown file"]
+];
+let materialService = { url: "", token: "" };
+const serviceMaterials = new Map();
+let materialServiceError = "";
+let materialEventsSince = null;
+
+function normalizeMaterial(name) {
+  return String(name || "").toLowerCase().replace(/[^a-z0-9+]+/g, " ").trim();
+}
+
+// true/false when both are known, null when either is missing. Same rule as
+// resin_slicer/material_tags.py: GOO keeps 32 characters of the name.
+function sameMaterial(a, b) {
+  const x = normalizeMaterial(a);
+  const y = normalizeMaterial(b);
+  if (!x || !y) return null;
+  if (x === y) return true;
+  const [short, full] = [String(a).trim(), String(b).trim()].sort((p, q) => p.length - q.length);
+  return short.length === 32 && normalizeMaterial(full.slice(0, 32)) === normalizeMaterial(short);
+}
+
+function printerMaterialKey(printer) {
+  return printer.mainboardId || printer.ip;
+}
+
+function usingMaterialService() {
+  return Boolean(materialService.url);
+}
+
+function loadedMaterialOf(printer) {
+  if (usingMaterialService()) return serviceMaterials.get(printerMaterialKey(printer))?.material || "";
+  return printer.material || "";
+}
+
+function materialRequest(method, path, body) {
+  return window.slicer.materialService({ baseUrl: materialService.url, token: materialService.token, method, path, body });
+}
+
+function servicePrinterFields(printer, extra = {}) {
+  return { name: printerLabel(printer), ip: printer.ip, protocol: printer.protocol, mainboardId: printer.mainboardId || "", ...extra };
+}
+
+function initMaterialService() {
+  const stored = readStoredJson(MATERIAL_SERVICE_KEY, {}) || {};
+  materialService = { url: String(stored.url || ""), token: String(stored.token || "") };
+  $("materialServiceUrl").value = materialService.url;
+  $("materialServiceToken").value = materialService.token;
+  $("saveMaterialServiceButton").addEventListener("click", connectMaterialService);
+  $("materialServiceUrl").addEventListener("keydown", (event) => {
+    if (event.key === "Enter") connectMaterialService();
+  });
+  setInterval(pollMaterialEvents, MATERIAL_POLL_MS);
+  if (usingMaterialService()) {
+    refreshServiceMaterials({ quiet: true }).then(pollMaterialEvents);
+  }
+  renderMaterialServiceStatus();
+}
+
+async function connectMaterialService() {
+  let url = $("materialServiceUrl").value.trim().replace(/\/+$/, "");
+  if (url && !/^https?:\/\//i.test(url)) url = `http://${url}`;
+  if (url) {
+    try {
+      new URL(url);
+    } catch {
+      logAndPrompt("Invalid Address", "Enter the material service address, for example http://jetliquid-ww1:8070.");
+      return;
+    }
+  }
+  const wasLocal = !usingMaterialService();
+  materialService = { url, token: $("materialServiceToken").value.trim() };
+  $("materialServiceUrl").value = url;
+  writeStoredJson(MATERIAL_SERVICE_KEY, materialService);
+  materialEventsSince = null;
+  serviceMaterials.clear();
+  materialServiceError = "";
+  if (!url) {
+    log("Loaded resin is now kept on this PC only.");
+    renderMaterialServiceStatus();
+    renderPrinters();
+    return;
+  }
+  await refreshServiceMaterials({ carryLocal: wasLocal });
+  await pollMaterialEvents();
+  if (!materialServiceError) {
+    log(`Connected to the material service at ${url}.`);
+    playSound("confirm");
+  }
+}
+
+// Fetch every printer's loaded resin; printers the service doesn't know yet are
+// added (with the resin set on this PC, if any) so its watcher covers them.
+async function refreshServiceMaterials({ quiet = false, carryLocal = true } = {}) {
+  if (!usingMaterialService()) return;
+  try {
+    const result = await materialRequest("GET", "/api/v1/printers");
+    serviceMaterials.clear();
+    for (const record of result.printers || []) serviceMaterials.set(record.key, record);
+    for (const printer of networkPrinters) {
+      const key = printerMaterialKey(printer);
+      if (serviceMaterials.has(key)) continue;
+      const extra = carryLocal && printer.material ? { material: printer.material } : {};
+      const record = await materialRequest("PUT", `/api/v1/printers/${encodeURIComponent(key)}`, servicePrinterFields(printer, extra));
+      serviceMaterials.set(key, record);
+    }
+    materialServiceError = "";
+  } catch (error) {
+    materialServiceError = error.message;
+    if (!quiet) {
+      log(`Material service: ${error.message}`, "warning");
+      showErrorPrompt("Material Service Not Reachable", error);
+    }
+  }
+  renderMaterialServiceStatus();
+  // Don't rebuild the list under someone typing a resin name into it.
+  if (!$("printerList").contains(document.activeElement)) renderPrinters();
+}
+
+function renderMaterialServiceStatus() {
+  const status = $("materialServiceStatus");
+  if (!status) return;
+  status.classList.toggle("error", Boolean(materialServiceError));
+  if (!usingMaterialService()) {
+    status.textContent = "Set each printer's loaded resin above. Without a material service it is kept on this PC only and nothing watches the printers.";
+  } else if (materialServiceError) {
+    status.textContent = `Material service not reachable: ${materialServiceError}`;
+  } else {
+    status.textContent = `Shared with everyone using ${materialService.url}. It watches the Elegoo SDCP printers (e.g. Mars 5 Ultra) and flags prints sliced for another resin, however they were started.`;
+  }
+}
+
+async function setPrinterMaterial(printer, material, fields = {}) {
+  const label = printerLabel(printer);
+  try {
+    if (usingMaterialService()) {
+      const key = printerMaterialKey(printer);
+      const changes = servicePrinterFields(printer, { ...fields, ...(material === undefined ? {} : { material }) });
+      serviceMaterials.set(key, await materialRequest("PUT", `/api/v1/printers/${encodeURIComponent(key)}`, changes));
+    } else if (material !== undefined) {
+      printer.material = material;
+      writeStoredJson(PRINTER_STORAGE_KEY, networkPrinters);
+    }
+    if (material !== undefined) log(material ? `${label}: loaded resin set to ${material}.` : `${label}: loaded resin cleared.`);
+    if (fields.policy) log(`${label}: ${MATERIAL_POLICIES.find(([value]) => value === fields.policy)?.[1] || fields.policy}.`);
+    playSound("confirm");
+  } catch (error) {
+    log(`Could not update ${label}: ${error.message}`, "warning");
+    showErrorPrompt("Could Not Save Loaded Resin", error);
+  }
+  renderPrinters();
+}
+
+function printerMaterialControls(printer) {
+  const box = document.createElement("div");
+  box.className = "printer-row-material";
+  const label = document.createElement("span");
+  label.textContent = "Resin";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.setAttribute("list", "resinNameOptions");
+  input.placeholder = "Not set";
+  input.value = loadedMaterialOf(printer);
+  input.title = "The resin in this printer's vat. Sending a file sliced for another resin asks first.";
+  const set = document.createElement("button");
+  set.type = "button";
+  set.textContent = "Set";
+  const apply = () => {
+    const value = input.value.trim();
+    if (value === loadedMaterialOf(printer)) return;
+    setPrinterMaterial(printer, value);
+  };
+  set.addEventListener("click", apply);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") apply();
+  });
+  box.append(label, input, set);
+
+  const record = usingMaterialService() ? serviceMaterials.get(printerMaterialKey(printer)) : null;
+  if (record) {
+    if (printer.protocol === "sdcp") {
+      const policyLabel = document.createElement("span");
+      policyLabel.textContent = "Watch";
+      const policy = document.createElement("select");
+      for (const [value, text] of MATERIAL_POLICIES) policy.append(new Option(text, value));
+      policy.value = record.policy || "warn";
+      policy.title = "What the material service does when a print starts with the wrong resin loaded";
+      policy.addEventListener("change", () => setPrinterMaterial(printer, undefined, { policy: policy.value }));
+      box.append(policyLabel, policy);
+    }
+    const notes = [];
+    if (record.materialSetBy && record.materialSetAt) {
+      const when = new Date(record.materialSetAt);
+      notes.push(`Set by ${record.materialSetBy}${Number.isNaN(when.getTime()) ? "" : `, ${when.toLocaleString()}`}`);
+    }
+    const live = record.live || {};
+    const check = live.check;
+    let mismatch = false;
+    if (check && ["printing", "paused"].includes(live.state)) {
+      mismatch = check.match === false;
+      notes.push(check.match === true
+        ? `Printing ${check.filename}: resin matches`
+        : check.match === false
+          ? `Printing ${check.filename}: sliced for ${check.jobMaterial}`
+          : `Printing ${check.filename}: resin unknown`);
+    } else if (live.state === "unreachable") {
+      notes.push("Watcher can't reach the printer");
+    }
+    if (notes.length) {
+      const note = document.createElement("p");
+      note.className = `printer-row-material-note${mismatch ? " mismatch" : ""}`;
+      note.textContent = notes.join(" · ");
+      box.append(note);
+    }
+  }
+  return box;
+}
+
+async function recordSentJob(printer, remoteName, material) {
+  if (!usingMaterialService() || !remoteName) return;
+  try {
+    await materialRequest("POST", "/api/v1/jobs", { printerKey: printerMaterialKey(printer), remoteName, material: material || "" });
+  } catch (error) {
+    log(`Material service didn't record ${remoteName}: ${error.message}. Its watcher will treat the file as unknown.`, "warning");
+  }
+}
+
+async function pollMaterialEvents() {
+  if (!usingMaterialService()) return;
+  let result;
+  try {
+    result = await materialRequest("GET", `/api/v1/events?since=${materialEventsSince ?? 0}&limit=50`);
+  } catch {
+    return; // the status line shows reachability; don't toast every poll
+  }
+  if (materialEventsSince === null) {
+    materialEventsSince = result.last || 0; // only warnings from now on
+    return;
+  }
+  const mine = new Set(networkPrinters.map(printerMaterialKey));
+  const events = result.events || [];
+  for (const event of events) {
+    materialEventsSince = Math.max(materialEventsSince, event.id);
+    if (!mine.has(event.printerKey)) continue;
+    log(event.message, "warning");
+    if (event.action === "paused" || event.action === "pause-failed") {
+      showThemedPrompt({
+        title: event.action === "paused" ? "Print Paused: Wrong Resin" : "Wrong Resin: Pause Failed",
+        message: event.message,
+        detail: "If the resin is actually right, resume the print from the printer or under Printers, and update the printer's loaded resin.",
+        kind: "warning"
+      });
+    } else {
+      playSound("warning");
+    }
+  }
+  if (events.length) refreshServiceMaterials({ quiet: true });
 }
 
 init().catch((error) => {

@@ -49,6 +49,7 @@ from .config import PROFILES
 from .engine_info import API_VERSION, CAPABILITIES, ENGINE_ID, PACKAGE_DIR, version_json
 from .engine_openapi import openapi_document
 from .errors import SlicerError
+from .material_tags import materials_match, read_file_material
 
 API_PREFIX = "/api/v1"
 NDJSON = "application/x-ndjson"
@@ -218,6 +219,9 @@ def _error_message(exc: BaseException) -> dict[str, Any]:
 def _api_error(exc: BaseException) -> ApiError:
     if isinstance(exc, ApiError):
         return exc
+    if isinstance(exc, network_printers.MaterialMismatchError):
+        return ApiError(HTTPStatus.CONFLICT, "material_mismatch", str(exc),
+                        {"fileMaterial": exc.file_material, "loadedMaterial": exc.loaded_material})
     if isinstance(exc, network_printers.PrinterError):
         return ApiError(HTTPStatus.BAD_GATEWAY, "printer_error", str(exc))
     if isinstance(exc, (SlicerError, ValueError, KeyError, TypeError)):
@@ -280,7 +284,19 @@ def _check_send(body: dict[str, Any]) -> tuple[dict[str, Any], str]:
     path = str(body.get("path") or "")
     if not path or not Path(path).is_file():
         raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_request", "\"path\" must be a sliced file on this PC.", {"path": path})
+    loaded = str(body.get("loadedMaterial") or "").strip()
+    if loaded and not body.get("allowMaterialMismatch"):
+        file_material = read_file_material(path) or ""
+        if materials_match(loaded, file_material) is False:
+            raise _api_error(network_printers.MaterialMismatchError(file_material, loaded))
     return printer, path
+
+
+def _file_material(body: dict[str, Any]) -> dict[str, Any]:
+    path = str(body.get("path") or "")
+    if not path or not Path(path).is_file():
+        raise ApiError(HTTPStatus.BAD_REQUEST, "invalid_request", "\"path\" must be a sliced file on this PC.", {"path": path})
+    return {"type": "file-material", "path": path, "material": read_file_material(path)}
 
 
 def _send(body: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> dict[str, Any]:
@@ -291,6 +307,8 @@ def _send(body: dict[str, Any], emit: Callable[[dict[str, Any]], None]) -> dict[
             path,
             start=bool(body.get("start")),
             progress=lambda message, fraction: emit({"type": "progress", "message": message, "fraction": fraction}),
+            loaded_material=str(body.get("loadedMaterial") or "") or None,
+            allow_material_mismatch=bool(body.get("allowMaterialMismatch")),
         )
     return {"type": "printer-sent", **result}
 
@@ -335,6 +353,7 @@ class EngineHandler(BaseHTTPRequestHandler):
             ("POST", f"{API_PREFIX}/printers/status-all"): lambda: self._simple(_status_all),
             ("POST", f"{API_PREFIX}/printers/control"): lambda: self._simple(_control),
             ("POST", f"{API_PREFIX}/printers/send"): lambda: self._send_job(),
+            ("POST", f"{API_PREFIX}/files/material"): lambda: self._simple(_file_material),
         }
 
     def _dispatch(self, method: str) -> None:

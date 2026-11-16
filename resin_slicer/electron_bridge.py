@@ -48,6 +48,7 @@ COMMANDS = (
     "printer-status-all",
     "printer-send",
     "printer-control",
+    "file-material",
 )
 
 
@@ -65,6 +66,11 @@ def main(argv: list[str] | None = None) -> int:
             _write_json({"type": "profiles", "profiles": {name: asdict(cfg) for name, cfg in PROFILES.items()}})
         elif args.command == "preview":
             _preview(_read_json())
+        elif args.command == "file-material":
+            from .material_tags import read_file_material
+
+            request = _read_json()
+            _write_json({"type": "file-material", "path": request.get("path"), "material": read_file_material(str(request.get("path") or ""))})
         elif args.command.startswith("printer-"):
             _printer_command(args.command, _read_json())
         else:
@@ -98,6 +104,8 @@ def _printer_command(command: str, request: dict[str, Any]) -> None:
             str(request.get("path") or ""),
             start=bool(request.get("start")),
             progress=lambda message, fraction: _write_json({"type": "progress", "message": message, "fraction": fraction}),
+            loaded_material=str(request.get("loadedMaterial") or "") or None,
+            allow_material_mismatch=bool(request.get("allowMaterialMismatch")),
         )
         _write_json({"type": "printer-sent", **result})
     else:

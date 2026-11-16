@@ -38,6 +38,8 @@ CAPABILITIES = (
     "printers.status-all",
     "printers.send",
     "printers.control",
+    "printers.material-check",
+    "files.material",
 )
 
 

@@ -48,7 +48,8 @@ bridge's messages, including the `type` field.
 | `POST /api/v1/printers/status` | `{printer}` → `{status}` | `printer-status` |
 | `POST /api/v1/printers/status-all` | `{printers}` → `{statuses}`; a printer that doesn't answer gets `ok:false`, the request itself doesn't fail | `printer-status-all` |
 | `POST /api/v1/printers/control` | `{printer, action: pause, resume or stop}` | `printer-control` |
-| `POST /api/v1/printers/send` | `{printer, path, start}`; refuses the wrong format for that printer, and refuses while it's printing (streams `progress` with `fraction`) | `printer-send` |
+| `POST /api/v1/printers/send` | `{printer, path, start, loadedMaterial, allowMaterialMismatch}`; refuses the wrong format for that printer, a file sliced for another resin than `loadedMaterial` (409 `material_mismatch`), and refuses while it's printing (streams `progress` with `fraction`); the result has the file's `material` | `printer-send` |
+| `POST /api/v1/files/material` | `{path}` → `{material}`: the resin a `.ctb`/`.goo` was sliced for (null if it doesn't say). See [MATERIALS.md](MATERIALS.md) | `file-material` |
 
 - **Long jobs** (preview, slice, send): send `Accept: application/x-ndjson`, or add `?stream=1`,
   to get every message as it happens, one per line, with the result last. Blank lines are
@@ -64,6 +65,7 @@ bridge's messages, including the `type` field.
   | 401 | `unauthorized` |
   | 404 | `not_found` |
   | 405 | `method_not_allowed` |
+  | 409 | `material_mismatch` (details `fileMaterial`, `loadedMaterial`) |
   | 422 | `failed` (the slicer couldn't do it) |
   | 502 | `printer_error`, `unreachable` |
 

@@ -21,7 +21,8 @@ const ROUTES = {
   "printer-status": { method: "POST", path: "/api/v1/printers/status" },
   "printer-status-all": { method: "POST", path: "/api/v1/printers/status-all" },
   "printer-control": { method: "POST", path: "/api/v1/printers/control" },
-  "printer-send": { method: "POST", path: "/api/v1/printers/send", stream: true }
+  "printer-send": { method: "POST", path: "/api/v1/printers/send", stream: true },
+  "file-material": { method: "POST", path: "/api/v1/files/material" }
 };
 
 function engineEnv({ token, stepPython }) {
