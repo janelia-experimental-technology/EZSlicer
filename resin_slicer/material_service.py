@@ -86,6 +86,9 @@ def job_stats(body: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if str(body.get("name") or "").strip():
         out["name"] = str(body["name"]).strip()[:200]
+    # who sent it, for the leaderboards: a name to show or a Windows account (HHMI\name)
+    if str(body.get("person") or "").strip():
+        out["person"] = str(body["person"]).strip()[:100]
     for field, kind in (("parts", int), ("volumeMl", float), ("seconds", float)):
         value = body.get(field)
         if value is None or isinstance(value, bool):
@@ -262,6 +265,7 @@ class Store:
                 self.save()
             else:
                 taken["jobId"] = new_job_id(key)
+                taken.pop("person", None)  # a reprint is started at the printer, by someone unknown
             return taken
 
     def add_event(self, event: dict[str, Any]) -> dict[str, Any]:
@@ -444,7 +448,7 @@ class MaterialService:
             "material": record.get("material") or job.get("material") or "",
             "name": job.get("name") or job.get("remoteName") or job.get("filename") or "",
         }
-        for field, name in (("parts", "parts"), ("volumeMl", "volume_cm3"), ("seconds", "seconds")):
+        for field, name in (("person", "person"), ("parts", "parts"), ("volumeMl", "volume_cm3"), ("seconds", "seconds")):
             if job.get(field) is not None:
                 body[name] = job[field]
         body.update({k: v for k, v in extra.items() if v is not None})
@@ -589,7 +593,10 @@ class Handler(BaseHTTPRequestHandler):
                 key, remote = str(body.get("printerKey") or ""), str(body.get("remoteName") or "")
                 if not key or not remote:
                     raise HttpError(HTTPStatus.BAD_REQUEST, "\"printerKey\" and \"remoteName\" are required.")
-                entry = store.record_job(key, remote, str(body.get("material") or ""), by, job_stats(body))
+                stats = job_stats(body)
+                if "person" not in stats and self.headers.get("X-Jet-User"):
+                    stats["person"] = self.headers["X-Jet-User"].strip()[:100]
+                entry = store.record_job(key, remote, str(body.get("material") or ""), by, stats)
                 self.service.report(key, entry, "sent")
                 self._json(HTTPStatus.OK, entry)
             elif method == "GET" and path == f"{API}/events":
