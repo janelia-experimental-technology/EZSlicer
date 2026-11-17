@@ -248,13 +248,20 @@ class ChituPrinter:
                 break
         return lines
 
-    def command(self, text: str, timeout: float | None = None) -> list[str]:
-        """Send a command; return reply lines up to and including the final ok/Error."""
+    def command(self, text: str, timeout: float | None = None,
+                done: Callable[[list[str]], bool] | None = None) -> list[str]:
+        """Send a command; return reply lines up to and including the final ok/Error
+        (or until ``done`` says the reply is complete)."""
         self._flush()
         self.sock.sendto(text.encode("utf-8"), (self.ip, CHITU_PORT))
-        lines = self._recv_lines(lambda got: any(_is_final(line) for line in got), timeout or self.timeout)
+        lines = self._recv_lines(done or (lambda got: any(_is_final(line) for line in got)), timeout or self.timeout)
         if not lines:
             raise PrinterError(f"{self.ip} did not answer {text.split()[0]}")
+        if not any(line.startswith("ok") for line in lines):
+            # The board follows an "Error:..." line with its own "ok N:0", sometimes in a later
+            # packet. Read it now: left in the socket, it would be taken as the next command's
+            # answer (an empty file list, so a send could overwrite a file already there).
+            lines += self._recv_lines(lambda got: any(line.startswith("ok") for line in got), ERROR_TRAILER_S)
         return lines
 
     def _flush(self) -> None:
@@ -285,7 +292,17 @@ class ChituPrinter:
         return PrinterStatus(state, detail=detail, progress=progress, raw=raw)
 
     def list_files(self) -> list[str]:
-        lines = self.command("M20", timeout=6)
+        # The list ends "End file list" then "ok L:<count>". Wait for that, and read only what
+        # follows "Begin file list": a stray earlier reply must not pass for an empty list, or a
+        # send could overwrite a file already on the printer.
+        def ended(got: list[str]) -> bool:
+            return any(line == "End file list" or line.startswith("ok L:") for line in got)
+
+        lines = self.command("M20", timeout=6, done=ended)
+        if "Begin file list" in lines:
+            lines = lines[lines.index("Begin file list"):]
+        elif not ended(lines):
+            raise PrinterError(f"{self.ip} didn't send its file list")
         names = []
         for line in lines:
             if line in ("Begin file list", "End file list") or _is_final(line):
@@ -350,6 +367,9 @@ class ChituPrinter:
 
     def delete(self, remote_name: str) -> None:
         _expect_ok(self.command(f"M30 {remote_name}", timeout=4), "delete the file")
+
+
+ERROR_TRAILER_S = 0.5  # how long to wait for the "ok" that follows a ChiTu "Error:" line
 
 
 def _is_final(line: str) -> bool:
