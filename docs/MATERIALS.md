@@ -54,7 +54,7 @@ needs `Authorization: Bearer <token>`; reads stay open. Changes are attributed t
 | `GET /api/v1/printers/{key}` | one printer |
 | `PUT /api/v1/printers/{key}` | add or update one; any of `name, ip, protocol, mainboardId, material, policy, watch` |
 | `DELETE /api/v1/printers/{key}` | forget a printer |
-| `POST /api/v1/jobs` | `{printerKey, remoteName, material}`: what a file sent to that printer was sliced for. Optional, for jET's stats: `name`, `parts` (models on the plate), `volumeMl` (the slice's resin), `seconds` (estimated print time) |
+| `POST /api/v1/jobs` | `{printerKey, remoteName, material}`: what a file sent to that printer was sliced for. Optional, for jET's stats: `name`, `person` (who sent it), `parts` (models on the plate), `volumeMl` (the slice's resin), `seconds` (estimated print time) |
 | `GET /api/v1/events?since=N&limit=M` | `{events, last}`: watcher warnings, oldest first |
 
 `key` is the printer's SDCP MainboardID, or its IP for ChiTu boards (which don't report one).
@@ -105,6 +105,10 @@ and later reports with the same `job_id` update the job:
 - **Files it doesn't know** (USB, another slicer): counted as jobs, with no resin volume.
 - **Restarts:** the print in progress is kept in the data file, so it stays one job.
 - **`material`** is the printer's loaded resin, or the file's resin if none is set.
+- **`person`** (for the leaderboards) is whoever's EZSlicer window sent the file: its Windows
+  account (`HHMI\name`), sent as `person` with `POST /api/v1/jobs`, else the `X-Jet-User` header.
+  It rides on that send's reports. Reprints started at the printer and files it doesn't know
+  have no person, so they count for nobody.
 - **Delivery:** one try per report. A 404 or no answer is dropped quietly, so stats never hold
   up a print.
 

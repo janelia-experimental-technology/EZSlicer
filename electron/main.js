@@ -4,7 +4,19 @@ const fsSync = require("fs");
 const fs = require("fs/promises");
 const { createReadStream } = require("fs");
 const path = require("path");
+const os = require("os");
 const { EngineClient, startEngineHost } = require("./engine-client");
+
+// Who sent a job, for jET's stats leaderboards: this PC's Windows account (DOMAIN\name).
+function windowsAccount() {
+  try {
+    const name = os.userInfo().username;
+    const domain = process.env.USERDOMAIN || "";
+    return name ? (domain ? `${domain}\\${name}` : name) : "";
+  } catch {
+    return "";
+  }
+}
 
 const repoRoot = path.resolve(__dirname, "..");
 const appIconPath = path.join(repoRoot, "src", "assets", "app", "app-icon.ico");
@@ -421,6 +433,11 @@ ipcMain.handle("materials:request", async (_event, { baseUrl, token, method = "G
   }
   if (!/^https?:$/.test(url.protocol) || !url.pathname.startsWith("/api/")) {
     throw new Error("The material service address must be an http(s) URL.");
+  }
+  // A sent job records who sent it (main process: the renderer can't read the account).
+  if (method === "POST" && url.pathname === "/api/v1/jobs" && body && typeof body === "object" && !body.person) {
+    const person = windowsAccount();
+    if (person) body = { ...body, person };
   }
   const headers = { Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";

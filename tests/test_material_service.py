@@ -145,7 +145,7 @@ class StatsTests(unittest.TestCase):
             self.watch.poll()
 
     def send(self, name: str = "part.goo") -> dict:
-        entry = self.store.record_job("MB1", name, "Siraya Fast Grey", "test", {"name": "part", "parts": 3, "volumeMl": 12.5, "seconds": 3600})
+        entry = self.store.record_job("MB1", name, "Siraya Fast Grey", "test", {"name": "part", "person": "HHMI\\lima", "parts": 3, "volumeMl": 12.5, "seconds": 3600})
         self.service.report("MB1", entry, "sent")
         return entry
 
@@ -177,6 +177,16 @@ class StatsTests(unittest.TestCase):
         self.assertEqual(printing_reports[0]["job_id"], entry["jobId"])
         self.assertNotEqual(printing_reports[1]["job_id"], entry["jobId"])
         self.assertEqual(printing_reports[1]["volume_cm3"], 12.5)
+        # the send is the sender's; a reprint is started at the printer, by nobody known
+        self.assertEqual(printing_reports[0]["person"], "HHMI\\lima")
+        self.assertNotIn("person", printing_reports[1])
+
+    def test_person_rides_on_every_report_of_a_sent_job(self) -> None:
+        self.send()
+        self.run_polls(IDLE, printing("part.goo"), ended(9), printing("usb.ctb"), ended(9))
+        sent_job = [r for r in self.recorder.reports if r["name"] == "part"]
+        self.assertEqual([r["person"] for r in sent_job], ["HHMI\\lima"] * 3)
+        self.assertTrue(all("person" not in r for r in self.recorder.reports if r["name"] == "usb.ctb"))
 
     def test_file_transfer_is_not_the_end(self) -> None:
         self.run_polls(IDLE, printing("usb.ctb"), PrinterStatus("busy"), printing("usb.ctb"))
@@ -299,6 +309,9 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(status, 400)
         status, job = self.call("POST", "/api/v1/jobs", {"printerKey": "MB1", "remoteName": "c.goo", "parts": 2, "volumeMl": 4.5})
         self.assertEqual((job["parts"], job["volumeMl"]), (2, 4.5))
+        self.assertEqual(job["person"], "talbot")  # X-Jet-User, when the body doesn't say
+        status, job = self.call("POST", "/api/v1/jobs", {"printerKey": "MB1", "remoteName": "d.goo", "person": "HHMI\\lima"})
+        self.assertEqual(job["person"], "HHMI\\lima")
         status, events = self.call("GET", "/api/v1/events?since=0", token=None)
         self.assertEqual(events, {"events": [], "last": 0})
 
