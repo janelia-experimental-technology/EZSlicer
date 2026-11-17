@@ -2,6 +2,7 @@
 
     python -m resin_slicer.material_service [--host 127.0.0.1] [--port 8070] [--data DIR]
                                             [--token SECRET] [--webhook URL] [--poll 5]
+                                            [--stats-url URL] [--stats-token-file FILE]
 
 The Mars 5 Ultra (and the other SDCP printers) can't be told what resin is in the vat, so
 this service keeps that for them and is what EZSlicer (and anything else) asks instead:
@@ -9,7 +10,8 @@ this service keeps that for them and is what EZSlicer (and anything else) asks i
 * ``GET  /api/v1/printers``           every printer with its loaded material and live state
 * ``PUT  /api/v1/printers/{key}``     add/update a printer; ``{"material": "..."}`` sets the resin
 * ``DELETE /api/v1/printers/{key}``   forget a printer
-* ``POST /api/v1/jobs``               ``{"printerKey", "remoteName", "material"}``: what a sent file is
+* ``POST /api/v1/jobs``               ``{"printerKey", "remoteName", "material"}``: what a sent file is,
+                                      plus optional ``name``, ``parts``, ``volumeMl``, ``seconds`` for jET's stats
 * ``GET  /api/v1/events?since=N``     mismatch warnings, newest last
 * ``GET  /api/health``
 
@@ -22,6 +24,12 @@ event (and a webhook POST); with policy ``pause`` the print is paused too, and w
 a print of a file it knows nothing about is paused as well. Prints already running when the
 watcher connects are reported, never paused.
 
+With ``--stats-url`` the service also reports every resin job to jET's numbers (the console
+agent's ``POST /api/v1/stats/jobs``): ``sent`` when EZSlicer records a file, ``printing`` when a
+print starts (from anywhere), then ``done``, ``failed`` or ``cancelled`` with the real time. It
+sends the token in ``--stats-token-file`` (on jetliquid, the console token: no new key). A report
+that can't be delivered is dropped; stats never hold up a print.
+
 When ``--token`` (or MATERIAL_SERVICE_TOKEN) is set, every write needs
 ``Authorization: Bearer <token>``; reads stay open. Who made a change comes from the
 ``X-Jet-User`` header (the jET gateway sets it) or the body's ``by``.
@@ -32,11 +40,14 @@ import argparse
 import hmac
 import json
 import os
+import queue
 import re
 import sys
 import threading
 import time
+import urllib.error
 import urllib.request
+import uuid
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -66,13 +77,102 @@ def remote_basename(name: str) -> str:
     return str(name or "").replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
+def new_job_id(key: str) -> str:
+    return f"{key}-{uuid.uuid4().hex[:12]}"
+
+
+def job_stats(body: dict[str, Any]) -> dict[str, Any]:
+    """The optional numbers a sender gives for jET's stats, cleaned; missing ones are left out."""
+    out: dict[str, Any] = {}
+    if str(body.get("name") or "").strip():
+        out["name"] = str(body["name"]).strip()[:200]
+    for field, kind in (("parts", int), ("volumeMl", float), ("seconds", float)):
+        value = body.get(field)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            number = kind(value)
+        except (TypeError, ValueError):
+            raise ValueError(f"\"{field}\" must be a number.") from None
+        if number < 0:
+            raise ValueError(f"\"{field}\" can't be negative.")
+        out[field] = round(number, 3) if kind is float else number
+    return out
+
+
+def job_outcome(status: network_printers.PrinterStatus, layer: int | None, total: int | None) -> str:
+    """How a print that just stopped ended: done, failed or cancelled."""
+    info = ((status.raw or {}).get("status") or {}).get("PrintInfo") or {}
+    code = info.get("Status")
+    if code == 9:  # Complete
+        return "done"
+    if code in (7, 8):  # Stopping, Stopped
+        return "cancelled"
+    if info.get("ErrorNumber"):
+        return "failed"
+    if total and layer is not None:
+        return "done" if layer >= total else "cancelled"
+    return "done"  # the printer didn't say; it ran until it stopped on its own
+
+
+class StatsReporter:
+    """Sends job reports to jET's stats in the background, one try each. A 404 (the console
+    doesn't take stats yet) or no answer is dropped quietly; stats must never block a print."""
+
+    def __init__(self, url: str = "", token_file: str = "") -> None:
+        self.url = url
+        self.token_file = Path(token_file) if token_file else None
+        self.queue: queue.Queue[dict[str, Any]] = queue.Queue(maxsize=1000)
+        self.warned: set[str] = set()
+        if url:
+            threading.Thread(target=self._run, name="stats", daemon=True).start()
+
+    def report(self, body: dict[str, Any]) -> None:
+        if not self.url:
+            return
+        try:
+            self.queue.put_nowait(body)
+        except queue.Full:
+            pass
+
+    def _token(self) -> str:
+        try:
+            return self.token_file.read_text(encoding="utf-8-sig").strip() if self.token_file else ""
+        except OSError:
+            return ""
+
+    def _run(self) -> None:
+        while True:
+            self.post(self.queue.get())
+
+    def post(self, body: dict[str, Any]) -> bool:
+        headers = {"Content-Type": "application/json"}
+        token = self._token()
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        request = urllib.request.Request(self.url, data=json.dumps(body).encode("utf-8"), method="POST", headers=headers)
+        try:
+            urllib.request.urlopen(request, timeout=10).close()
+            return True
+        except urllib.error.HTTPError as exc:
+            reason = f"HTTP {exc.code}"
+            quiet = exc.code == 404
+        except Exception as exc:  # noqa: BLE001 - the console may be down; that's fine
+            reason, quiet = type(exc).__name__, True
+        if not quiet and reason not in self.warned:
+            self.warned.add(reason)
+            print(f"material service: stats report refused ({reason}); dropping reports like it", file=sys.stderr)
+        return False
+
+
 class Store:
     """Printers, the job ledger and events in one JSON file, written atomically."""
 
     def __init__(self, path: Path) -> None:
         self.path = path
         self.lock = threading.RLock()
-        self.data: dict[str, Any] = {"printers": {}, "jobs": {}, "events": [], "nextEventId": 1}
+        # running: the print each printer is on now, so a restarted service keeps its job id
+        self.data: dict[str, Any] = {"printers": {}, "jobs": {}, "events": [], "nextEventId": 1, "running": {}}
         if path.is_file():
             try:
                 loaded = json.loads(path.read_text(encoding="utf-8"))
@@ -127,15 +227,17 @@ class Store:
         with self.lock:
             found = self.data["printers"].pop(key, None) is not None
             self.data["jobs"].pop(key, None)
+            self.data.setdefault("running", {}).pop(key, None)
             self.live.pop(key, None)
             if found:
                 self.save()
             return found
 
-    def record_job(self, key: str, remote_name: str, material: str, by: str) -> dict[str, Any]:
+    def record_job(self, key: str, remote_name: str, material: str, by: str, stats: dict[str, Any] | None = None) -> dict[str, Any]:
         with self.lock:
             jobs = self.data["jobs"].setdefault(key, {})
-            entry = {"remoteName": remote_basename(remote_name), "material": material, "at": now_iso(), "by": by}
+            entry = {"remoteName": remote_basename(remote_name), "material": material, "at": now_iso(), "by": by,
+                     "jobId": new_job_id(key), "started": False, **(stats or {})}
             jobs[entry["remoteName"].lower()] = entry
             if len(jobs) > MAX_JOBS_PER_PRINTER:
                 for old in sorted(jobs, key=lambda name: jobs[name].get("at", ""))[: len(jobs) - MAX_JOBS_PER_PRINTER]:
@@ -146,6 +248,21 @@ class Store:
     def job(self, key: str, remote_name: str) -> dict[str, Any] | None:
         with self.lock:
             return (self.data["jobs"].get(key) or {}).get(remote_basename(remote_name).lower())
+
+    def take_job(self, key: str, remote_name: str) -> dict[str, Any]:
+        """The ledger entry for a print that just started. The first print of a sent file is
+        that send's job; a reprint is a new job with the same numbers."""
+        with self.lock:
+            entry = self.job(key, remote_name)
+            if not entry:
+                return {"jobId": new_job_id(key)}
+            taken = dict(entry)
+            if entry.get("jobId") and not entry.get("started"):
+                entry["started"] = True
+                self.save()
+            else:
+                taken["jobId"] = new_job_id(key)
+            return taken
 
     def add_event(self, event: dict[str, Any]) -> dict[str, Any]:
         with self.lock:
@@ -181,6 +298,7 @@ class PrinterWatch(threading.Thread):
         self.checked_file = ""
         self.first_look = True
         self.waiting_since: tuple[str, float] | None = None
+        self.job: dict[str, Any] | None = None  # the print being counted for jET's stats
 
     def stop(self) -> None:
         self.stop_event.set()
@@ -223,11 +341,17 @@ class PrinterWatch(threading.Thread):
         self._live(state=status.state, detail=status.detail, filename=filename)
         running = status.state in ("printing", "paused")
         if not running:
+            if self.job and status.state == "idle":  # "busy" (a file transfer) isn't the end of a print
+                self._finish(status)
+            if status.state != "idle" and self.job:
+                return
             self.in_job = False
             self.checked_file = ""
             self.first_look = False
             self.waiting_since = None
             return
+        if self.job and self.job.get("filename") == filename:
+            self.job["layer"], self.job["totalLayers"] = status.current_layer, status.total_layers
         if self.in_job and filename == self.checked_file:
             return
         if not self.first_look and self.service.store.job(self.key, filename) is None:
@@ -236,11 +360,20 @@ class PrinterWatch(threading.Thread):
             if time.monotonic() - self.waiting_since[1] < self.grace_s:
                 return  # give EZSlicer a moment to record what it just sent
         self.waiting_since = None
+        if self.job:  # another print took over without the printer going idle in between
+            self._finish(status)
         self.in_job = True
         self.checked_file = filename
         was_running = self.first_look
         self.first_look = False
         self.check(filename, already_running=was_running, paused=status.state == "paused")
+        self.job = self.service.start_job(self.key, filename, already_running=was_running)
+        self.job["layer"], self.job["totalLayers"] = status.current_layer, status.total_layers
+
+    def _finish(self, status: network_printers.PrinterStatus) -> None:
+        job, self.job = self.job, None
+        if job:
+            self.service.finish_job(self.key, job, job_outcome(status, job.get("layer"), job.get("totalLayers")))
 
     def check(self, filename: str, *, already_running: bool, paused: bool) -> None:
         store = self.service.store
@@ -290,13 +423,57 @@ class PrinterWatch(threading.Thread):
 
 
 class MaterialService:
-    def __init__(self, data_dir: Path, *, token: str = "", webhook: str = "", poll_s: float = 5.0) -> None:
+    def __init__(self, data_dir: Path, *, token: str = "", webhook: str = "", poll_s: float = 5.0,
+                 stats: StatsReporter | None = None) -> None:
         self.store = Store(data_dir / "printer-materials.json")
         self.token = token
         self.webhook = webhook
         self.poll_s = poll_s
+        self.stats = stats or StatsReporter()
         self.watches: dict[str, PrinterWatch] = {}
         self.stop_event = threading.Event()
+
+    # --- jET's stats: one report per change of a job ---
+
+    def report(self, key: str, job: dict[str, Any], status: str, **extra: Any) -> None:
+        record = self.store.printer(key) or {}
+        body: dict[str, Any] = {
+            "app": "ezslicer", "job_id": job["jobId"], "kind": "resin", "status": status,
+            "printer": record.get("name") or record.get("ip") or key,
+            # what's in the vat is what got used; else what the file was sliced for
+            "material": record.get("material") or job.get("material") or "",
+            "name": job.get("name") or job.get("remoteName") or job.get("filename") or "",
+        }
+        for field, name in (("parts", "parts"), ("volumeMl", "volume_cm3"), ("seconds", "seconds")):
+            if job.get(field) is not None:
+                body[name] = job[field]
+        body.update({k: v for k, v in extra.items() if v is not None})
+        self.stats.report(body)
+
+    def start_job(self, key: str, filename: str, *, already_running: bool) -> dict[str, Any]:
+        store = self.store
+        with store.lock:
+            running = store.data.setdefault("running", {})
+            current = running.get(key)
+            if already_running and current and current.get("filename") == filename:
+                return dict(current)  # the service restarted mid-print: still the same job
+            job = {**store.take_job(key, filename), "filename": filename, "startedAt": now_iso(),
+                   "startedTs": time.time(), "fromStart": not already_running}
+            job.pop("started", None)
+            running[key] = job
+            store.save()
+        self.report(key, job, "printing")
+        return dict(job)
+
+    def finish_job(self, key: str, job: dict[str, Any], outcome: str) -> None:
+        with self.store.lock:
+            running = self.store.data.setdefault("running", {})
+            if (running.get(key) or {}).get("jobId") == job["jobId"]:
+                running.pop(key)
+                self.store.save()
+        # the real time, when the watcher saw the print start
+        seconds = round(time.time() - job["startedTs"]) if job.get("fromStart") and job.get("startedTs") else None
+        self.report(key, {k: v for k, v in job.items() if k != "seconds"}, outcome, seconds=seconds)
 
     def emit(self, event: dict[str, Any]) -> dict[str, Any]:
         saved = self.store.add_event(event)
@@ -412,7 +589,9 @@ class Handler(BaseHTTPRequestHandler):
                 key, remote = str(body.get("printerKey") or ""), str(body.get("remoteName") or "")
                 if not key or not remote:
                     raise HttpError(HTTPStatus.BAD_REQUEST, "\"printerKey\" and \"remoteName\" are required.")
-                self._json(HTTPStatus.OK, store.record_job(key, remote, str(body.get("material") or ""), by))
+                entry = store.record_job(key, remote, str(body.get("material") or ""), by, job_stats(body))
+                self.service.report(key, entry, "sent")
+                self._json(HTTPStatus.OK, entry)
             elif method == "GET" and path == f"{API}/events":
                 since = int((query.get("since") or ["0"])[0] or 0)
                 limit = max(1, min(1000, int((query.get("limit") or ["100"])[0] or 100)))
@@ -479,8 +658,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--webhook", default=os.environ.get("MATERIAL_SERVICE_WEBHOOK", ""))
     parser.add_argument("--poll", type=float, default=5.0, help="seconds between printer status checks")
     parser.add_argument("--no-watch", action="store_true", help="serve the registry only")
+    parser.add_argument("--stats-url", default=os.environ.get("MATERIAL_SERVICE_STATS_URL", ""),
+                        help="report each resin job here (jET console: .../api/v1/stats/jobs)")
+    parser.add_argument("--stats-token-file", default=os.environ.get("MATERIAL_SERVICE_STATS_TOKEN_FILE", ""),
+                        help="file holding the bearer token for --stats-url (read on every report)")
     args = parser.parse_args(argv)
-    service = MaterialService(args.data, token=args.token, webhook=args.webhook, poll_s=args.poll)
+    service = MaterialService(args.data, token=args.token, webhook=args.webhook, poll_s=args.poll,
+                              stats=StatsReporter(args.stats_url, args.stats_token_file))
     if not args.no_watch:
         threading.Thread(target=service.supervise, name="supervisor", daemon=True).start()
     server = make_server(service, args.host, args.port)

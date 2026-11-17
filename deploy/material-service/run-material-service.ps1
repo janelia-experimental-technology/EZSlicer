@@ -16,6 +16,12 @@ $tokenFile = Join-Path $root "token.txt"
 if (Test-Path $tokenFile) { $env:MATERIAL_SERVICE_TOKEN = (Get-Content $tokenFile -Raw).Trim() }
 $webhookFile = Join-Path $root "webhook.txt"
 if (Test-Path $webhookFile) { $env:MATERIAL_SERVICE_WEBHOOK = (Get-Content $webhookFile -Raw).Trim() }
+# jET's stats: the console agent on this host, signed in with its own token (no new key)
+$consoleToken = "C:\ProgramData\AssetLoans\secrets\console_token.txt"
+if (Test-Path $consoleToken) {
+    $env:MATERIAL_SERVICE_STATS_URL = "http://127.0.0.1:8020/api/v1/stats/jobs"
+    $env:MATERIAL_SERVICE_STATS_TOKEN_FILE = $consoleToken
+}
 $env:PYTHONUTF8 = "1"
 $env:PYTHONPATH = Join-Path $root "app"
 

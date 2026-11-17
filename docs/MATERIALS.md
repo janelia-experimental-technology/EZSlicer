@@ -39,7 +39,7 @@ The loaded resin lives in one of two places:
 
 ```powershell
 python -m resin_slicer.material_service --host 0.0.0.0 --port 8070 --data C:\ProgramData\EZSlicer `
-    [--token <secret>] [--webhook <url>] [--poll 5]
+    [--token <secret>] [--webhook <url>] [--poll 5] [--stats-url <url>] [--stats-token-file <file>]
 ```
 
 It's standard library only and needs no extra packages. Data is kept in
@@ -54,7 +54,7 @@ needs `Authorization: Bearer <token>`; reads stay open. Changes are attributed t
 | `GET /api/v1/printers/{key}` | one printer |
 | `PUT /api/v1/printers/{key}` | add or update one; any of `name, ip, protocol, mainboardId, material, policy, watch` |
 | `DELETE /api/v1/printers/{key}` | forget a printer |
-| `POST /api/v1/jobs` | `{printerKey, remoteName, material}`: what a file sent to that printer was sliced for |
+| `POST /api/v1/jobs` | `{printerKey, remoteName, material}`: what a file sent to that printer was sliced for. Optional, for jET's stats: `name`, `parts` (models on the plate), `volumeMl` (the slice's resin), `seconds` (estimated print time) |
 | `GET /api/v1/events?since=N&limit=M` | `{events, last}`: watcher warnings, oldest first |
 
 `key` is the printer's SDCP MainboardID, or its IP for ChiTu boards (which don't report one).
@@ -82,6 +82,34 @@ loaded resin:
 
 ChiTu-board printers (e.g. the Jupiter) don't report which file is printing, so they get the
 send-time check only.
+
+### jET's numbers (stats)
+
+With `--stats-url`, the service reports each resin job to jET's stats, which jET Hangar, the
+kiosk tablet and the foyer TV show. On jetliquid that's the console agent's
+`POST /api/v1/stats/jobs`, with the console token from `--stats-token-file`, so there's no new
+key. Each report is
+`{app: "ezslicer", job_id, kind: "resin", status, printer, material, name, parts, volume_cm3, seconds}`,
+and later reports with the same `job_id` update the job:
+
+| When | `status` | Numbers |
+| --- | --- | --- |
+| EZSlicer records a sent file (`POST /api/v1/jobs`) | `sent` | the slice's parts, resin ml and estimated time |
+| The watcher sees a print start, however it was started | `printing` | the same, for a file it knows |
+| The printer goes idle again | `done`, `failed` or `cancelled` | the real time, timed from the start the watcher saw |
+
+- **How a print ended:** the printer says so (Complete is `done`, Stopped is `cancelled`, an
+  error number is `failed`). If it doesn't say, a print that reached its last layer is `done`.
+- **Reprints:** the first print of a sent file is that send's job. Printing the same file again
+  from the printer's screen is a new job with the same numbers.
+- **Files it doesn't know** (USB, another slicer): counted as jobs, with no resin volume.
+- **Restarts:** the print in progress is kept in the data file, so it stays one job.
+- **`material`** is the printer's loaded resin, or the file's resin if none is set.
+- **Delivery:** one try per report. A 404 or no answer is dropped quietly, so stats never hold
+  up a print.
+
+Only EZSlicer windows pointed at the service (Printers → Loaded resin) send the numbers. Prints
+started any other way are still counted, but without resin volume or parts.
 
 ### Deployment (jetliquid-ww1)
 

@@ -18,6 +18,7 @@ from .errors import ConfigError, SlicerError
 from .mesh import Mesh, load_mesh
 from . import network_printers
 from .engine_info import version_json
+from .formats.goo import _estimate_print_time
 from .pipeline import SliceJob, slice_to_file
 from .raster import LayerRaster, dilate_mask, mm_to_px
 from .slicing import prepare_mesh
@@ -289,6 +290,8 @@ def _slice(request: dict[str, Any]) -> None:
             "layers": result.layer_count,
             "supports": result.support_count,
             "materialMl": result.material_ml,
+            # the estimate the file's header carries (both formats estimate the same way)
+            "printSeconds": _estimate_print_time(config, result.layer_count),
             "previewDir": preview_dir,
             "previewLayerCount": result.layer_count,
             "report": _report_to_json(result.support_report) if result.support_report is not None else None,

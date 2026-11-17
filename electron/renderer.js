@@ -4626,6 +4626,13 @@ async function slicePlates(platesToSlice, { forceSuffix = false, label = "Slicin
       plate.slicedOutputPath = result.outputPath || payload.outputPath || "";
       plate.sliceLayerCount = result.layers || 0;
       plate.previewDir = result.previewDir || null;
+      // for jET's stats when this file is sent to a printer
+      plate.sliceStats = {
+        path: plate.slicedOutputPath,
+        parts: models.filter((model) => model.plateId === plate.id).length,
+        volumeMl: Number(result.materialMl) || 0,
+        seconds: Number(result.printSeconds) || undefined
+      };
       log(`Done ${plate.name}: ${result.outputPath}`);
       log(`${result.layers} layers, ${result.supports} supports, ${result.materialMl.toFixed(2)} ml resin`);
     }
@@ -9958,7 +9965,7 @@ async function sendActivePlateToPrinter() {
       loadedMaterial,
       allowMaterialMismatch
     });
-    recordSentJob(printer, result.remoteName, result.material || fileMaterial);
+    recordSentJob(printer, result.remoteName, result.material || fileMaterial, plate);
     showSendProgress(`${result.started ? "Printing" : "Uploaded"} ${result.remoteName} on ${printerLabel(printer)}`, 1);
     log(`${result.started ? "Started" : "Uploaded"} ${result.remoteName} on ${printerLabel(printer)}.`);
     playSound("success");
@@ -10203,10 +10210,17 @@ function printerMaterialControls(printer) {
   return box;
 }
 
-async function recordSentJob(printer, remoteName, material) {
+async function recordSentJob(printer, remoteName, material, plate) {
   if (!usingMaterialService() || !remoteName) return;
+  // the slice's numbers go to jET's stats with the job, if they belong to the file just sent
+  const stats = plate?.sliceStats?.path === plate?.slicedOutputPath ? plate.sliceStats : null;
   try {
-    await materialRequest("POST", "/api/v1/jobs", { printerKey: printerMaterialKey(printer), remoteName, material: material || "" });
+    await materialRequest("POST", "/api/v1/jobs", {
+      printerKey: printerMaterialKey(printer),
+      remoteName,
+      material: material || "",
+      ...(stats ? { parts: stats.parts, volumeMl: Math.round(stats.volumeMl * 1000) / 1000, seconds: stats.seconds } : {})
+    });
   } catch (error) {
     log(`Material service didn't record ${remoteName}: ${error.message}. Its watcher will treat the file as unknown.`, "warning");
   }

@@ -74,6 +74,7 @@ class BridgeCommandTests(unittest.TestCase):
         self.assertEqual(slice_to_file.call_args.kwargs["preview_dir"], layers)
         self.assertEqual(slice_to_file.call_args.kwargs["preview_scale"], 4)
         self.assertEqual(write.call_args.args[0]["previewDir"], layers)
+        self.assertIsInstance(write.call_args.args[0]["printSeconds"], int)
 
 
 class EngineDescriptionTests(unittest.TestCase):
