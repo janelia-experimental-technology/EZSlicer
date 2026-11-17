@@ -40,7 +40,9 @@ class FakeChituBoard(threading.Thread):
         while self.running:
             try:
                 data, addr = self.sock.recvfrom(65535)
-            except socket.timeout:
+            except (socket.timeout, ConnectionResetError):
+                # Windows reports an earlier reply to a client that had already closed as a
+                # reset on the next read; a real board just carries on.
                 continue
             except OSError:
                 return
@@ -134,6 +136,30 @@ class ChituPrinterTests(unittest.TestCase):
             status = printer.status()
         self.assertEqual(status.state, "printing")
         self.assertAlmostEqual(status.progress, 0.25)
+
+    def test_late_ok_after_error_is_not_the_next_answer(self):
+        # The board's "ok" after "Error:It's not printing now!" can arrive late; it must not
+        # be read as the file list's answer (an empty list lets a send overwrite a file).
+        # Worst case: the held-back "ok" lands just after the client clears its socket, right
+        # before the next answer. The fake sends it then, ahead of that answer.
+        original = self.board.reply
+        held = []
+
+        def late_ok(addr, *lines):
+            if held:
+                original(addr, *held)
+                held.clear()
+            if lines and lines[0].startswith("Error"):
+                original(addr, lines[0])
+                held.extend(lines[1:])
+            else:
+                original(addr, *lines)
+
+        self.board.reply = late_ok
+        for _ in range(5):
+            with npr.ChituPrinter("127.0.0.1", timeout=1.0) as printer:
+                self.assertEqual(printer.status().state, "idle")
+                self.assertEqual(printer.list_files(), ["existing.ctb"])
 
     def test_send_file_picks_unused_name_and_starts(self):
         with TemporaryDirectory() as tmp:
