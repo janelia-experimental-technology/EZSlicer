@@ -1,3 +1,4 @@
+import os
 import socket
 import struct
 import threading
@@ -7,6 +8,11 @@ from tempfile import TemporaryDirectory
 from unittest import mock
 
 from resin_slicer import network_printers as npr
+from resin_slicer import sent_files
+from resin_slicer.config import SupportConfig, profile
+from resin_slicer.formats.ctb import read_layer_starts
+from resin_slicer.mesh import cube_mesh
+from resin_slicer.pipeline import SliceJob, slice_to_file
 
 
 class FakeChituBoard(threading.Thread):
@@ -26,6 +32,7 @@ class FakeChituBoard(threading.Thread):
         self.bad_frames = 0
         self.commands = []
         self.running = True
+        self.reading = None  # (byte, file size) M4000 reports while printing; else 250/1000
 
     def stop(self):
         self.running = False
@@ -67,8 +74,8 @@ class FakeChituBoard(threading.Thread):
             text = data.decode()
             self.commands.append(text)
             if text == "M4000":
-                total = 1000 if self.printing else 0
-                self.reply(addr, f"ok B:0/0 X:0.000 Y:0.000 Z:0.000 F:256/256 D:{250 if self.printing else 0}/{total}/0")
+                position, total = (self.reading or (250, 1000)) if self.printing else (0, 0)
+                self.reply(addr, f"ok B:0/0 X:0.000 Y:0.000 Z:0.000 F:256/256 D:{position}/{total}/0")
             elif text == "M27":
                 self.reply(addr, "SD printing byte 250/1000", "ok N:0") if self.printing else self.reply(addr, "Error:It's not printing now!", "ok N:0")
             elif text == "M20":
@@ -103,6 +110,36 @@ class ChituPrinterTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.board.stop)
+        # the list of sent files goes in a folder of its own, never this PC's real one
+        data = TemporaryDirectory()
+        self.addCleanup(data.cleanup)
+        env = mock.patch.dict(os.environ, {"EZSLICER_DATA_DIR": data.name})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_a_print_this_pc_sent_is_named_with_its_layer(self):
+        config = profile("small-test").with_overrides(layer_height_mm=1.0)
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bracket.ctb"
+            slice_to_file(SliceJob(cube_mesh(6), config, SupportConfig(enabled=False)), path, "ctb")
+            starts = read_layer_starts(path)
+            self.assertEqual(len(starts), 6)
+            size = path.stat().st_size
+            npr.send_file({"ip": "127.0.0.1", "protocol": "chitu"}, path, start=True)
+        self.assertEqual(len(self.board.files["bracket.ctb"]), size)
+        # partway through layer 4 of 6
+        self.board.reading = (starts[3] + 10, size)
+        with npr.ChituPrinter("127.0.0.1", timeout=1.0) as printer:
+            status = printer.status()
+        self.assertEqual((status.state, status.filename, status.current_layer, status.total_layers), ("printing", "bracket.ctb", 4, 6))
+        self.assertAlmostEqual(status.progress, 4 / 6)
+        self.assertEqual(status.detail, "Printing - layer 4/6")
+        # a file of another size (started from a USB stick, say): still nameless
+        self.board.reading = (100, size + 1)
+        with npr.ChituPrinter("127.0.0.1", timeout=1.0) as printer:
+            status = printer.status()
+        self.assertEqual((status.filename, status.current_layer), ("", None))
+        self.assertAlmostEqual(status.progress, 100 / (size + 1))
 
     def test_frame_layout(self):
         frame = npr.chitu_frame(b"\x01\x02", 0x01020304)
@@ -187,6 +224,34 @@ class ChituPrinterTests(unittest.TestCase):
             with self.assertRaises(npr.PrinterError):
                 npr.send_file({"ip": "127.0.0.1", "protocol": "chitu"}, path)
         self.assertFalse(any(command.startswith("M28") for command in self.board.commands))
+
+
+class SentFilesTests(unittest.TestCase):
+    def setUp(self):
+        data = TemporaryDirectory()
+        self.addCleanup(data.cleanup)
+        env = mock.patch.dict(os.environ, {"EZSLICER_DATA_DIR": data.name})
+        env.start()
+        self.addCleanup(env.stop)
+
+    def test_newest_first_one_per_size_and_a_few_per_printer(self):
+        for k in range(sent_files.KEEP_PER_PRINTER + 3):
+            sent_files.record("10.0.0.5", f"part{k}.ctb", 1000 + k, [10, 20, 30])
+        sent_files.record("10.0.0.5", "again.ctb", 1005, [10, 20])  # the same size as part5: replaces it
+        self.assertEqual(sent_files.lookup("10.0.0.5", 1005)["name"], "again.ctb")
+        self.assertIsNone(sent_files.lookup("10.0.0.5", 1000))  # dropped, the oldest
+        self.assertIsNone(sent_files.lookup("10.0.0.6", 1010))  # another printer
+        self.assertIsNone(sent_files.lookup("10.0.0.5", 0))
+        entry = sent_files.lookup("10.0.0.5", 1010)
+        self.assertEqual([sent_files.layer_at(entry, b) for b in (0, 10, 19, 20, 35, 10_000)], [1, 1, 1, 2, 3, 3])
+        self.assertIsNone(sent_files.layer_at({"starts": []}, 50))
+
+    def test_only_ezslicer_ctb_files_have_a_layer_table_to_read(self):
+        with TemporaryDirectory() as tmp:
+            other = Path(tmp) / "other.ctb"
+            other.write_bytes(b"\x07\x01\xfd\x12" + bytes(5000))
+            self.assertIsNone(read_layer_starts(other))
+            self.assertIsNone(read_layer_starts(Path(tmp) / "missing.ctb"))
 
 
 class HelperTests(unittest.TestCase):

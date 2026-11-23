@@ -1,4 +1,5 @@
 import json
+import os
 import threading
 import unittest
 import urllib.request
@@ -101,6 +102,12 @@ class EngineSendTests(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.addCleanup(self.board.stop)
+        # files sent to the fake board are listed in a folder of its own, not this PC's (sent_files)
+        data = TemporaryDirectory()
+        self.addCleanup(data.cleanup)
+        env = mock.patch.dict(os.environ, {"EZSLICER_DATA_DIR": data.name})
+        env.start()
+        self.addCleanup(env.stop)
         handler = type("TestHandler", (engine.EngineHandler,), {"token": "secret"})
         self.server = engine.EngineServer(("127.0.0.1", 0), handler)
         threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.1}, daemon=True).start()

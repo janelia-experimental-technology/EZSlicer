@@ -145,10 +145,11 @@ def slice_to_file(
     layer_gen = _layer_iter(prepared, model_prepared, config, supports_enabled, support_plan, progress, layer_workers, cad_source)
     if preview_dir:
         layer_gen = _preview_writing_iter(layer_gen, preview_dir, preview_scale)
+    # the file's preview pictures (what the printer's screen shows) are drawn from the parts as placed
     if fmt == "goo":
-        stats = write_goo(output, config, prepared.layer_count, layer_gen)
+        stats = write_goo(output, config, prepared.layer_count, layer_gen, preview_triangles=mesh.triangles)
     else:
-        stats = write_ctb(output, config, prepared.layer_count, layer_gen)
+        stats = write_ctb(output, config, prepared.layer_count, layer_gen, preview_triangles=mesh.triangles)
 
     return SliceResult(
         layer_count=prepared.layer_count,

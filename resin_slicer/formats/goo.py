@@ -4,10 +4,17 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from typing import Sequence
+
 from ..config import PrintConfig
 from ..material import estimate_material_mm3
+from ..mesh import Triangle
+from ..preview import Picture, encode_goo, pictures
 from ..raster import LayerRaster, Run
 from .binary import ByteWriter, sized_ascii
+
+# The two pictures the printer shows (UVtools GooFile): small, then big, each followed by DELIMITER
+PREVIEW_SIZES = ((116, 116), (290, 290))
 
 MAGIC_TAG = bytes([0x07, 0x00, 0x00, 0x00, 0x44, 0x4C, 0x50, 0x00])
 DELIMITER = bytes([0x0D, 0x0A])
@@ -44,7 +51,9 @@ def write_goo(
     config: PrintConfig,
     layer_count: int,
     layers: object,
+    preview_triangles: Sequence[Triangle] | None = None,
 ) -> FormatStats:
+    """preview_triangles: the parts (mm), drawn into the file's preview pictures (blank without)."""
     material = 0.0
     encoded_layers: list[GooLayer] = []
     for layer_index, raster in layers:  # type: ignore[assignment]
@@ -52,7 +61,7 @@ def write_goo(
         encoded_layers.append(_encode_layer(layer_index, raster, config))
 
     writer = ByteWriter()
-    _write_header(writer, config, layer_count, material)
+    _write_header(writer, config, layer_count, material, pictures(preview_triangles or (), PREVIEW_SIZES))
     for layer in encoded_layers:
         _write_layer(writer, layer)
     writer.write_bytes(ENDING_STRING)
@@ -188,7 +197,7 @@ def _encode_layer(layer_index: int, raster: LayerRaster, config: PrintConfig) ->
     )
 
 
-def _write_header(writer: ByteWriter, config: PrintConfig, layer_count: int, material_mm3: float) -> None:
+def _write_header(writer: ByteWriter, config: PrintConfig, layer_count: int, material_mm3: float, previews: list[Picture]) -> None:
     writer.write_bytes(sized_ascii("V3.0", 4))
     writer.write_bytes(MAGIC_TAG)
     writer.write_bytes(sized_ascii("resin-slicer", 32))
@@ -200,9 +209,9 @@ def _write_header(writer: ByteWriter, config: PrintConfig, layer_count: int, mat
     writer.write_u16_be(0)
     writer.write_u16_be(0)
     writer.write_u16_be(0)
-    _write_rgb565_preview(writer, 116, 116)
+    writer.write_bytes(encode_goo(previews[0]))
     writer.write_bytes(DELIMITER)
-    _write_rgb565_preview(writer, 290, 290)
+    writer.write_bytes(encode_goo(previews[1]))
     writer.write_bytes(DELIMITER)
     writer.write_u32_be(layer_count)
     writer.write_u16_be(config.resolution_x)
@@ -271,10 +280,6 @@ def _write_layer(writer: ByteWriter, layer: GooLayer) -> None:
     writer.write_bytes(layer.data)
     writer.write_u8(_checksum(layer.data))
     writer.write_bytes(DELIMITER)
-
-
-def _write_rgb565_preview(writer: ByteWriter, width: int, height: int) -> None:
-    writer.write_bytes(b"\0\0" * width * height)
 
 
 def _checksum(data: bytes) -> int:

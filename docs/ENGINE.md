@@ -57,6 +57,13 @@ bridge's messages, including the `type` field.
 - **Hanging up:** preview and slice each run in their own Python process. A client that hangs up
   during a stream stops the job.
 - **Printer connections:** the engine owns them, and talks to each printer one call at a time.
+- **Which file a ChiTu board prints:** ChiTu boards (the Jupiter) report only how far into the file
+  they are (byte N of the file's size), not its name. The engine and the window keep a list of
+  the files this PC sent to each ChiTu printer (`%LOCALAPPDATA%\EZSlicer\sent-files.json`,
+  `EZSLICER_DATA_DIR` overrides). When the size being printed matches one of them, status gives
+  its `filename`, `total_layers` and `current_layer` (from the CTB's layer table) and a layer-based
+  `progress`. A file sent from another PC, or from a USB stick, stays nameless. SDCP printers
+  report all of this themselves.
 - **Errors** always look like `{"error": {"code", "message", "details"}}`:
 
   | Status | Codes |

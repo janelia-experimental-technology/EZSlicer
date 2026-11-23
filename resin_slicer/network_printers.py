@@ -34,7 +34,9 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from . import sent_files
 from .errors import SlicerError
+from .formats.ctb import read_layer_starts
 from .material_tags import materials_match, read_file_material
 
 DISCOVERY_PORT = 3000
@@ -288,7 +290,24 @@ class ChituPrinter:
             return PrinterStatus("idle", detail="Idle", raw=raw)
         progress = position / total if total else None
         state = "paused" if paused == 1 else "printing"
-        detail = f"{'Paused' if paused == 1 else 'Printing'} {progress * 100:.0f}%" if progress is not None else state
+        label = "Paused" if paused == 1 else "Printing"
+        # The board doesn't say which file: one this PC sent it, of the size it's printing, is that
+        # file, and its layer table says which layer that byte is in (sent_files)
+        sent = None
+        try:
+            sent = sent_files.lookup(self.ip, total)
+        except Exception:  # noqa: BLE001 - status must never fail over the list of sent files
+            sent = None
+        if sent:
+            layer = sent_files.layer_at(sent, position)
+            layers = sent.get("layers") or None
+            if layer and layers:
+                progress = layer / layers
+            detail = f"{label} - layer {layer}/{layers}" if layer and layers else f"{label} {progress * 100:.0f}%"
+            raw["sentFile"] = {"name": sent.get("name"), "sentAt": sent.get("sentAt")}
+            return PrinterStatus(state, detail=detail, progress=progress, current_layer=layer, total_layers=layers,
+                                 filename=str(sent.get("name") or ""), raw=raw)
+        detail = f"{label} {progress * 100:.0f}%" if progress is not None else state
         return PrinterStatus(state, detail=detail, progress=progress, raw=raw)
 
     def list_files(self) -> list[str]:
@@ -730,6 +749,12 @@ def send_file(
         if progress:
             progress(f"Uploading {name}", 0.0)
         client.upload(path, name, progress)
+        if protocol == "chitu":
+            # so its progress can name it later: ChiTu boards don't say which file they print
+            try:
+                sent_files.record(client.ip, name, path.stat().st_size, read_layer_starts(path) if path.suffix.lower() == ".ctb" else None)
+            except Exception:  # noqa: BLE001 - a send never fails over the list of sent files
+                pass
         started = False
         if start:
             if progress:

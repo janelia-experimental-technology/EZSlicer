@@ -115,6 +115,7 @@ The support preview shows posts, tips, bases, contact spheres, rafts/skates, enf
 
 - `.goo`: native Elegoo GOO V3.0 writer with per-layer print settings and RLE compression.
 - `.ctb`: native Chitu CTB v5 writer with CTB RLE, layer XOR coding, encrypted settings/signature sections, and preview/resin metadata records.
+- Both carry preview pictures of the parts (400×300 and 200×125 for CTB, 290×290 and 116×116 for GOO), which the printer shows in its file list and while printing. `resin_slicer/preview.py` draws them with plain Python.
 
 These are proprietary printer formats. The writer is intended to produce printer-compatible files, but machine firmware can be strict about resolution, build volume, metadata, and CTB/GOO dialects. Test with non-critical files first.
 

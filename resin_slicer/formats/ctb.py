@@ -1,14 +1,22 @@
 from __future__ import annotations
 
 import hashlib
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+from typing import Sequence
+
 from ..config import PrintConfig
 from ..material import estimate_material_mm3
+from ..mesh import Triangle
+from ..preview import Picture, encode_ctb, pictures
 from ..raster import LayerRaster, Run
 from .aes import aes256_cbc_zero_encrypt
 from .binary import ByteWriter, align
+
+# The two pictures the printer shows (ChiTuBox's and UVtools' sizes): big, then small
+PREVIEW_SIZES = ((400, 300), (200, 125))
 
 FORMAT_VERSION = 5
 PAGE_SIZE = 1 << 32
@@ -64,7 +72,9 @@ def write_ctb(
     config: PrintConfig,
     layer_count: int,
     layers: object,
+    preview_triangles: Sequence[Triangle] | None = None,
 ) -> FormatStats:
+    """preview_triangles: the parts (mm), drawn into the file's preview pictures (blank without)."""
     material = 0.0
     encoded_layers: list[CtbLayer] = []
     for layer_index, raster in layers:  # type: ignore[assignment]
@@ -72,7 +82,7 @@ def write_ctb(
         encoded_layers.append(_encode_layer(layer_index, raster, config))
 
     writer = ByteWriter()
-    _write_file(writer, config, encoded_layers, material)
+    _write_file(writer, config, encoded_layers, material, pictures(preview_triangles or (), PREVIEW_SIZES))
     path.write_bytes(writer.data)
     return FormatStats(material)
 
@@ -158,7 +168,7 @@ def _encode_layer(layer_index: int, raster: LayerRaster, config: PrintConfig) ->
     )
 
 
-def _write_file(writer: ByteWriter, config: PrintConfig, layers: list[CtbLayer], material_mm3: float) -> None:
+def _write_file(writer: ByteWriter, config: PrintConfig, layers: list[CtbLayer], material_mm3: float, previews: list[Picture]) -> None:
     checksum = 0
     writer.write_u32_le(0x12FD0107)
     settings_section = writer.reserve(8)
@@ -190,10 +200,10 @@ def _write_file(writer: ByteWriter, config: PrintConfig, layers: list[CtbLayer],
     _write_resin(writer, config)
 
     settings.write_at(settings.large_preview_offset, _u32(writer.pos()))
-    _write_preview(writer, 400, 300)
+    _write_preview(writer, previews[0])
 
     settings.write_at(settings.small_preview_offset, _u32(writer.pos()))
-    _write_preview(writer, 300, 225)
+    _write_preview(writer, previews[1])
 
     settings.write_at(settings.layer_table_offset, _u32(writer.pos()))
     layer_refs_pos = writer.reserve(16 * len(layers))
@@ -330,32 +340,17 @@ def _write_layer(writer: ByteWriter, layer: CtbLayer, layer_index: int, page_num
     writer.write_bytes(encrypted)
 
 
-def _write_preview(writer: ByteWriter, width: int, height: int) -> None:
-    writer.write_u32_le(width)
-    writer.write_u32_le(height)
+def _write_preview(writer: ByteWriter, picture: Picture) -> None:
+    # width, height, where the picture's bytes are and how many, then four reserved words (ChiTuBox
+    # writes zeros), then the run-length coded picture (preview.encode_ctb)
+    writer.write_u32_le(picture.width)
+    writer.write_u32_le(picture.height)
     section = writer.reserve(8)
-    data = _preview_rle(width, height, (0, 0, 0))
+    writer.reserve(16)
+    data = encode_ctb(picture)
     offset = writer.pos()
     writer.write_bytes(data)
     writer.write_at(section, _section(offset, len(data)))
-
-
-def _preview_rle(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
-    red, green, blue = rgb
-    color = ((red >> 3) << 11) | ((green >> 2) << 5) | (blue >> 3)
-    out = bytearray()
-    remaining = width * height
-    while remaining:
-        length = min(0xFFF, remaining)
-        if length <= 2:
-            value = color & ~0x20
-            for _ in range(length):
-                out.extend(value.to_bytes(2, "little"))
-        else:
-            out.extend((color | 0x20).to_bytes(2, "little"))
-            out.extend(((length - 1) | 0x3000).to_bytes(2, "little"))
-        remaining -= length
-    return bytes(out)
 
 
 def _write_resin(writer: ByteWriter, config: PrintConfig) -> None:
@@ -398,6 +393,40 @@ def _section(offset: int, size: int) -> bytes:
 
 def _section_rev(offset: int, size: int) -> bytes:
     return _u32(size) + _u32(offset)
+
+
+LAYER_REF_TAG = 0x58  # the third word of each layer table entry, as written by _layer_ref
+SCAN_BYTES = 1 << 20  # the previews and the layer table sit near the start
+
+
+def read_layer_starts(path: str | Path) -> list[int] | None:
+    """Where each layer's data starts in a CTB that EZSlicer wrote (None for any other file).
+
+    The settings that point to the layer table are encrypted, but EZSlicer writes the table right
+    after the small preview, which is found by its size (200 x 125 now, 300 x 225 before 0.3.4)."""
+    try:
+        with Path(path).open("rb") as handle:
+            head = handle.read(SCAN_BYTES)
+            size = Path(path).stat().st_size
+    except OSError:
+        return None
+    for width, height in ((200, 125), (300, 225)):
+        at = head.find(struct.pack("<II", width, height))
+        if at < 0 or at + 16 > len(head):
+            continue
+        offset, length = struct.unpack_from("<II", head, at + 8)
+        table = offset + length
+        starts: list[int] = []
+        while table + 16 <= len(head):
+            start, page, tag, zero = struct.unpack_from("<IIII", head, table)
+            start += page * PAGE_SIZE
+            if tag != LAYER_REF_TAG or zero != 0 or start >= size or (starts and start <= starts[-1]):
+                break
+            starts.append(start)
+            table += 16
+        if starts:
+            return starts
+    return None
 
 
 def _layer_ref(offset: int, page: int) -> bytes:
